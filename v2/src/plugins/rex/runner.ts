@@ -45,6 +45,7 @@ const WindowsSchema = z.looseObject({ windows: z.array(z.looseObject({
 })) });
 const ProcessSchema = z.looseObject({ child: z.unknown() });
 const CreatedSchema = z.looseObject({ session_id: z.string() });
+const ClientsSchema = z.looseObject({ clients: z.array(z.looseObject({ client_id: z.string(), info: z.looseObject({ kind: z.string() }).nullish() })) });
 const RunSchema = z.looseObject({ window_id: z.string().nullish(), block_ids: z.array(z.string()).nullish() });
 
 type Block = { id: string; label: string; window: string; windowLabel: string; live: boolean };
@@ -120,6 +121,19 @@ export const rexRunner: Runner = {
     if (sid.kind === "missing") return [];
     const blocks = await blocksOf(sid.id);
     return blocks === null ? null : [...new Set(blocks.filter(b => b.live && agentBlock(b)).map(b => b.label))];
+  },
+  async attach(conversation, label) {
+    if (rexBinary() === null) return fail("Rex is not installed");
+    const sid = await sessionId(sessionName(conversation));
+    if (sid.kind !== "found") return fail(sid.kind === "missing" ? `no Rex session for this chat yet` : "Rex is not answering; is the Rex app running?");
+    const block = (await blocksOf(sid.id) ?? []).find(b => b.label === label);
+    if (block === undefined) return fail(`${label} has no Rex window (it may have ended)`);
+    await rex(["focus", "-s", sid.id, block.window]);
+    const clients = await rex(["client", "ls", "--json"]);
+    const app = clients.ok ? parse(clients.out, ClientsSchema)?.clients.find(c => c.info?.kind === "app") : undefined;
+    if (app !== undefined) await rex(["-C", app.client_id, "do", "session.select", `session_id=${sid.id}`]);
+    if (process.platform === "darwin") await exec(["/usr/bin/open", "-a", "Rex"]);
+    return ok({ kind: "shown", note: `showing ${label} in Rex` });
   },
   async stop(conversation, agent) {
     if (!rexUsed()) return;

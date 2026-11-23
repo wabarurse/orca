@@ -1,4 +1,5 @@
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import type { Links } from "../plugins/types";
 import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
 import type { Role } from "../types";
@@ -44,6 +45,7 @@ export type ToolContext = {
   provider: Provider;
   settings: RequestSettings | null;
   runtime: Runtime;
+  links: Links;
 };
 
 export type ToolResult = string | (TextBlockParam | ImageBlockParam)[];

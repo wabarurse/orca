@@ -11,9 +11,9 @@ import { saveImage } from "../core/images";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
-import type { Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
+import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
-import { chooseRunner, runnerNames, stopAgent } from "../core/runner/runtime";
+import { chooseRunner, runnerNames, runners, stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
@@ -240,7 +240,8 @@ export class App {
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
       pick: (title, options) => this.ask({ kind: "pick", title, options }),
       say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
-      open: async path => { await this.deps.open(path); } };
+      open: async path => { await this.deps.open(path); },
+      attach: async plan => { await this.attach(plan); } };
   }
 
   private async startDaemon(conversation: string): Promise<boolean> {
@@ -606,6 +607,7 @@ export class App {
     else if (tab?.id === "bubbles" && char === "d") await this.deleteChat(page.rows[page.index]);
     else if (tab?.id === "plugins" && key.name === "enter") { this.openPluginPage(page.rows[page.index]); return; }
     else if (tab?.id === "plugins" && char === "t") { await this.togglePlugin(page.rows[page.index]); return; }
+    else if (tab?.id === "agents" && key.name === "enter") { await this.attachAgent(page.rows[page.index]); }
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
     else if (tab?.plugin != null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
     else if (tab?.plugin != null) {
@@ -645,6 +647,24 @@ export class App {
     page.status = `restored ${row.name}`;
   }
 
+  private async attach(plan: Attach): Promise<void> {
+    if (plan.kind === "shown") { this.flash(plan.note); return; }
+    const code = await this.deps.terminal.handOver(plan.argv);
+    this.head = "unset";
+    this.flash(code === 0 ? "back from the window" : `the window exited ${code}`);
+  }
+
+  private async attachAgent(row: Row | undefined): Promise<void> {
+    if (row === undefined) return;
+    const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
+    if (run === undefined || !live(run)) { this.flash(`${row.id} is not running`); return; }
+    const runner = (await runners(this.conversation.id)).find(r => r.name === run.runner);
+    if (runner === undefined) { this.flash(`${row.id} runs in ${run.runner}, which is off in this bubble`, true); return; }
+    const plan = await runner.attach(this.conversation.id, run.agent);
+    if (!plan.ok) { this.flash(plan.error, true); return; }
+    await this.attach(plan.data);
+  }
+
   private async bubbleEnter(row: Row | undefined): Promise<void> {
     const target = bubbleTarget(row);
     if (target.kind === "bubble") { await this.newConversation(target.id); return; }
@@ -661,7 +681,7 @@ export class App {
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
+      const actions = tab?.id === "agents" ? "enter attach · s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,

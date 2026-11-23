@@ -30,6 +30,12 @@ export function pluginDetails(plugins: Map<string, LoadedPlugin>, problems: Plug
     { title: "Pages", lines: !on ? ["turn it on (t) to see its pages"] : tabs.length === 0 ? ["none: it adds tools or background work only"] : [...tabs.map(pageLabel), "enter opens it"] },
     ...(p.tools.length === 0 ? [] : [{ title: "Tools", lines: p.tools.map(t => `${t.tool.spec.name} (${t.roles.join(", ")})`) }]),
     ...(p.storage.length === 0 ? [] : [{ title: "Storage", lines: p.storage.map(s => `${s.scope}: ${s.about}`) }]),
+    ...(p.provides.length + p.uses.length + p.emits.length + p.on.length === 0 ? [] : [{ title: "Links", lines: [
+      ...p.provides.map(s => `provides ${s.name}: ${s.about}`),
+      ...(p.uses.length === 0 ? [] : [`uses ${p.uses.map(u => `${u}${enabled.includes(u) ? "" : " (off)"}`).join(", ")}`]),
+      ...p.emits.map(e => `sends ${p.name}/${e.name}: ${e.about}`),
+      ...p.on.map(l => `listens to ${l.event}`),
+    ] }]),
     ...(p.retention.length === 0 ? [] : [{ title: "Retention", lines: p.retention.map(r => `${r.tab}: archived ${r.archiveAfterDays === null ? "by hand" : `${r.archiveAfterDays} day${r.archiveAfterDays === 1 ? "" : "s"} after it settles`}, removed by orca2 clean ${r.purgeAfterDays} days later`) }]),
   ];
 }

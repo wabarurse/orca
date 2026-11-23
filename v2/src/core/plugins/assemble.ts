@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { linksFor } from "./context";
 import { pluginData } from "../bubbles";
 import type { Bound, LoopHooks } from "../loop/hooks";
 import { rolePrompt } from "../prompt";
@@ -30,6 +31,8 @@ export type Assembled = {
 
 export type AssembleInput = { conversation: string; agent: string; bundle: string; branch: string | null; cwd: string; directory: string; trusted: boolean };
 
+const ownedBy = (tool: Tool, owner: string): Tool => ({ ...tool, run: (input, ctx) => tool.run(input, { ...ctx, links: linksFor(ctx.conversation, owner) }) });
+
 export async function assemble(input: AssembleInput): Promise<Result<Assembled>> {
   const { plugins: available, problems } = await availablePlugins(input.directory, input.trusted);
   const enabled = (await enabledNames(input.conversation)).flatMap(name => {
@@ -55,11 +58,11 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
       const existing = tools.get(name);
       if (existing !== undefined && existing.owner !== "core") { problems.push({ name: loaded.plugin.name, dir: loaded.dir, problem: `tool ${name} is already provided by ${existing.owner}` }); continue; }
       if (existing !== undefined && !entry.replaces) { problems.push({ name: loaded.plugin.name, dir: loaded.dir, problem: `tool ${name} would replace a core tool without replaces: true` }); continue; }
-      tools.set(name, { tool: entry.tool, owner: loaded.plugin.name });
+      tools.set(name, { tool: ownedBy(entry.tool, loaded.plugin.name), owner: loaded.plugin.name });
     }
   }
 
-  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, branch: input.branch, cwd: input.cwd,
+  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, branch: input.branch, cwd: input.cwd, links: linksFor(input.conversation, loaded.plugin.name),
     data: scope => pluginData(input.conversation, loaded.plugin.name, scope) });
   const bind = <H>(pick: (loaded: LoadedPlugin) => H[]): Bound<H>[] => used.flatMap(loaded => pick(loaded).map(hook => ({ hook, ctx: ctxFor(loaded) })));
   const hooks: LoopHooks = {

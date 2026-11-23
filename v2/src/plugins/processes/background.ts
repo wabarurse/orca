@@ -7,7 +7,7 @@ const background: PluginBackground = defineBackground({
     name: "ended", everyMs: 2_000,
     run: async ctx => {
       const dir = settled(await ctx.data("conversation"));
-      for (const proc of settled(await listProcs(dir))) {
+      for (const proc of settled(await listProcs(dir, ctx))) {
         if (proc.state === "running" || proc.notified) continue;
         const lines = (await tail(dir, proc.id, 20)).map(line => `  ${line}`);
         await ctx.tell(proc.owner, [`process ${describe(proc)}`, ...lines].join("\n"));
@@ -20,7 +20,7 @@ const background: PluginBackground = defineBackground({
   stop: null,
   remove: async ctx => {
     const dir = settled(await ctx.data("conversation"));
-    for (const proc of settled(await listProcs(dir))) if (proc.state === "running") await stopProc(dir, proc);
+    for (const proc of settled(await listProcs(dir, ctx))) if (proc.state === "running") await stopProc(dir, proc, ctx);
   },
 });
 

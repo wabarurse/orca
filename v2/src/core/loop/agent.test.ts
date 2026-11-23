@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { noLinks } from "../plugins/testing";
 import { z } from "zod";
 import type { ContentBlock } from "@anthropic-ai/sdk/resources/messages";
 import { ok, paths } from "../../config";
@@ -69,7 +70,7 @@ describe("agent loop", () => {
 
   test("hooks change input, block, ask, rewrite results, shape requests and filter input", async () => {
     const hooks = emptyHooks();
-    const ctx: PluginContext = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator", branch: null, cwd: "", data: async () => ok("") };
+    const ctx: PluginContext = { plugin: "p", conversation: "", agent: "orchestrator", role: "orchestrator", branch: null, cwd: "", data: async () => ok(""), links: noLinks };
     hooks.beforeTool.push({ ctx, hook: async call => call.input.text === "secret" ? { action: "block", reason: "no secrets" }
       : call.input.text === "ask" ? { action: "ask", question: "ok?" } : { action: "run", input: { text: `${String(call.input.text)}!` } } });
     hooks.afterTool.push({ ctx, hook: async (_call, result) => ({ ...result, content: `${String(result.content)} (checked)` }) });
@@ -100,7 +101,7 @@ describe("agent loop", () => {
   test("a guarded command reaches the model as a refused tool result, nothing runs, and the span records it", async () => {
     const hooks = emptyHooks();
     const seen: string[] = [];
-    const ctx: PluginContext = { plugin: "p", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), branch: null, data: async () => ok(home.path()) };
+    const ctx: PluginContext = { plugin: "p", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), branch: null, data: async () => ok(home.path()), links: noLinks };
     hooks.afterTool.push({ ctx, hook: async (call, result) => { seen.push(String(call.input.command)); return result; } });
     const s = await setup([[toolUse("g", "bash", { command: "grep -ril 'agent notes' . > ran.txt" })], [toolUse("h", "bash", { command: "echo found-it" })], [text("found")]], [bash], hooks);
     await put(s.conversation, "orchestrator", "user", "find agent notes", { images: [], delivery: "steer" });
@@ -119,7 +120,7 @@ describe("agent loop", () => {
 
   test("a plugin hook that rewrites a command into a guarded one is refused by bash, and plugin rules apply", async () => {
     const hooks = emptyHooks();
-    const ctx: PluginContext = { plugin: "rewrite", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), branch: null, data: async () => ok(home.path()) };
+    const ctx: PluginContext = { plugin: "rewrite", conversation: "c", agent: "orchestrator", role: "orchestrator", cwd: home.path(), branch: null, data: async () => ok(home.path()), links: noLinks };
     hooks.beforeTool.push({ ctx, hook: async call => call.input.command === "ls" ? { action: "run", input: { command: "sudo ls" } } : { action: "run", input: call.input } });
     const noMake: GuardRule = { id: "no-make", group: "efficiency", test: call => call.command?.program === "make", reason: "this repo builds with bun", suggest: () => "bun run build" };
     const s = await setup([[toolUse("a", "bash", { command: "ls" }), toolUse("b", "bash", { command: "make all" })], [text("done")]], [bash], hooks, async () => false, [noMake]);

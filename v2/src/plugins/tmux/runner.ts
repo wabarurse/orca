@@ -54,4 +54,12 @@ export const tmuxRunner: Runner = {
   async stop(conversation, agent) {
     await tmux(["kill-window", "-t", `=${sessionName(conversation)}:=${agent}`]);
   },
+  async attach(conversation, label) {
+    const bin = which("tmux");
+    if (bin === null) return fail("tmux is not installed");
+    const session = sessionName(conversation);
+    const selected = await tmux(["select-window", "-t", `=${session}:=${label}`]);
+    if (!selected.ok || selected.data.code !== 0) return fail(`${label} has no tmux window (it may have ended)`);
+    return ok({ kind: "terminal", argv: [bin, ...socketArgs(), "attach-session", "-t", `=${session}`] });
+  },
 };

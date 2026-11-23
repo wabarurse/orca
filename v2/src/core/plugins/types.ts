@@ -3,6 +3,7 @@ import type { GuardRule } from "../tools/bash/guard";
 import type { MemorySection } from "../loop/rolling";
 import type { AgentInfo, Tool, ToolResult } from "../tools/registry";
 import type { Message, Role } from "../types";
+import type { z } from "zod";
 import type { Result } from "../../config";
 
 export type StorageScope = "conversation" | "bubble" | "global";
@@ -15,7 +16,37 @@ export type PluginContext = {
   branch: string | null;
   cwd: string;
   data: (scope: StorageScope) => Promise<Result<string>>;
+  links: Links;
 };
+
+export type Links = {
+  call: (plugin: string, service: string, input: unknown) => Promise<Result<unknown>>;
+  emit: (event: string, payload: unknown) => Promise<Result<number>>;
+  runner: () => Promise<Runner>;
+  runnerNamed: (name: string) => Promise<Runner | null>;
+};
+
+export type LinkContext = BackgroundContext & { from: string };
+export type Service = { name: string; about: string; run: (input: unknown, ctx: LinkContext) => Promise<Result<unknown>> };
+export type PluginEvent = { name: string; about: string; check: (payload: unknown) => Result<unknown> };
+export type Listener = { event: string; run: (payload: unknown, ctx: LinkContext) => Promise<void> };
+
+const parsed = <T>(schema: z.ZodType<T>, value: unknown, what: string): Result<T> => {
+  const result = schema.safeParse(value);
+  return result.success ? { ok: true, data: result.data } : { ok: false, error: `${what}: ${result.error.issues.map(i => `${i.path.join(".")} ${i.message}`).join("; ")}` };
+};
+
+export function defineService<I>(name: string, about: string, input: z.ZodType<I>, run: (input: I, ctx: LinkContext) => Promise<Result<unknown>>): Service {
+  return { name, about, run: async (raw, ctx) => { const value = parsed(input, raw, `${name} input`); return value.ok ? run(value.data, ctx) : value; } };
+}
+
+export function defineEvent<P>(name: string, about: string, payload: z.ZodType<P>): PluginEvent {
+  return { name, about, check: raw => parsed(payload, raw, `${name} payload`) };
+}
+
+export function listen<P>(event: string, payload: z.ZodType<P>, run: (payload: P, ctx: LinkContext) => Promise<void>): Listener {
+  return { event, run: async (raw, ctx) => { const value = parsed(payload, raw, `${event} payload`); if (value.ok) await run(value.data, ctx); } };
+}
 
 export type ToolCallInfo = { name: string; input: Record<string, unknown> };
 
@@ -56,6 +87,10 @@ export type Plugin = {
   guard: GuardRule[];
   bundles: Bundle[];
   retention: Retention[];
+  provides: Service[];
+  uses: string[];
+  emits: PluginEvent[];
+  on: Listener[];
   ui: string | null;
   background: string | null;
 };
@@ -77,6 +112,7 @@ export type UiHost = PluginContext & {
   pick: (title: string, options: string[]) => Promise<number | null>;
   say: (text: string) => Promise<void>;
   open: (path: string) => Promise<void>;
+  attach: (attach: Attach) => Promise<void>;
 };
 
 export type TabAction = { key: string; label: string; run: (row: Row | null, host: UiHost) => Promise<void> };
@@ -113,7 +149,9 @@ export type Runner = {
   start: (launch: Launch) => Promise<{ handle: string; pid: number | null }>;
   alive: (conversation: string) => Promise<string[] | null>;
   stop: (conversation: string, agent: string) => Promise<void>;
+  attach: (conversation: string, label: string) => Promise<Result<Attach>>;
 };
+export type Attach = { kind: "shown"; note: string } | { kind: "terminal"; argv: string[] };
 export type BackgroundHook = (ctx: BackgroundContext) => Promise<void>;
 export type PluginMemory = { title: string; text: (ctx: BackgroundContext) => Promise<string> };
 

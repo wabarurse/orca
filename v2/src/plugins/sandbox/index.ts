@@ -84,6 +84,10 @@ const plugin: Plugin = definePlugin({
   bundles: [],
   retention: [],
   guard: [],
+  provides: [],
+  uses: [],
+  emits: [],
+  on: [],
   ui: "./ui.ts",
   background: null,
 });

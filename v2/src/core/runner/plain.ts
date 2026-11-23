@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { fail } from "../../config";
 import { pidAlive } from "../lock";
 import type { Launch, Runner } from "../plugins/types";
 import { launchCommand } from "./launch";
@@ -32,5 +33,8 @@ export const plainRunner: Runner = {
     const leader = Number.parseInt(run.handle, 10);
     if (Number.isInteger(leader) && leader > 0) terminateGroup(leader);
     if (run.pid !== null && run.pid !== leader) terminateGroup(run.pid);
+  },
+  async attach() {
+    return fail("the plain runner runs things without a window; pick tmux or rex with /mux to attach to new agents and commands");
   },
 };

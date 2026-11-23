@@ -11,12 +11,12 @@ import { chooseRunner, runnerNames, selectedRunner } from "./runtime";
 
 const home = tempHome("runtime");
 
-const fakeRunner = (name: string): Runner => ({ name, start: async () => ({ handle: name, pid: null }), alive: async () => [], stop: async () => undefined });
+const fakeRunner = (name: string): Runner => ({ name, start: async () => ({ handle: name, pid: null }), alive: async () => [], stop: async () => undefined, attach: async () => ({ ok: false, error: "fake" }) });
 
 function register(names: string[]): void {
   registerBuiltins(names.map(name => ({
     name, dir: join(home.path(), name),
-    index: async () => ({ default: definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], guard: [], retention: [], ui: null, background: "./background.ts" }) }),
+    index: async () => ({ default: definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], guard: [], retention: [], provides: [], uses: [], emits: [], on: [], ui: null, background: "./background.ts" }) }),
     ui: null,
     background: async () => ({ default: defineBackground({ watchers: [], memory: null, runner: fakeRunner(name), stop: null, remove: null }) }),
   })));

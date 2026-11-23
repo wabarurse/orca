@@ -94,6 +94,18 @@ class OpenTuiTerminal implements PaintingTerminal {
     return this.live === null ? "" : this.live.display.selection();
   }
 
+  async handOver(argv: string[]): Promise<number> {
+    const renderer = this.live?.renderer ?? null;
+    if (renderer !== null) await renderer.suspend();
+    try {
+      const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "TMUX" && key !== "TMUX_PANE"));
+      return await Bun.spawn(argv, { stdin: "inherit", stdout: "inherit", stderr: "inherit", env }).exited;
+    } finally {
+      if (renderer !== null) await renderer.resume();
+      if (this.latest !== null) this.live?.display.show(this.latest);
+    }
+  }
+
   open(): void {
     if (this.opened) return;
     this.opened = true;

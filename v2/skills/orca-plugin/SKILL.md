@@ -66,6 +66,10 @@ const plugin: Plugin = {
   guard: [],
   bundles: [],
   retention: [],
+  provides: [],
+  uses: [],
+  emits: [],
+  on: [],
   ui: "./ui.ts",          // or null
   background: null,       // or "./background.ts"
 };
@@ -164,6 +168,32 @@ retention: [{
 The daemon archives due items once an hour; `orca2 clean` archives what is due too, then calls `purge` for items
 archived longer than `purgeAfterDays` (`clean --preview` lists them first). An item the user restored with `u` is
 never archived again automatically. `purge` deletes only the ids it is given, and an id may already be gone.
+
+### Links: working with other plugins
+
+Plugins never import each other; they reach each other through the core, which looks things up when they are used
+(no load order). Every context has `links` (`ctx.links`, `host.links`, a tool's `ctx.links`).
+
+```ts
+import { z } from "zod";
+import { defineEvent, defineService, listen } from "orca2/plugin";
+provides: [defineService("add", "add a note; returns { id }", z.object({ text: z.string() }), async (input, ctx) => ok({ id: "n1" }))],
+uses: ["tasks"],                                   // shown on Ctrl+P; a call to a plugin that is off returns an error
+emits: [defineEvent("added", "a note was added: { id }", z.object({ id: z.string() }))],
+on: [listen("tasks/merged", z.object({ number: z.number() }), async (payload, ctx) => { /* react */ })],
+```
+
+- **Services** ask and wait: `await ctx.links.call("notes", "add", { text })` returns `Result<unknown>`; parse it with
+  your own Zod schema. The core checks the input against the provider's schema first and runs the provider in its own
+  context (its storage, `ctx.from` is the caller).
+- **Events** announce: `await ctx.links.emit("added", { id })` reaches every enabled plugin listening to
+  `<your plugin>/added`, in the process that sends it. Only declared events can be sent, the payload is checked, and a
+  listener that throws does not stop the others. It returns how many listeners ran.
+- **The runner** is the one shared contract: `await ctx.links.runner()` is the runner `/mux` chose (plain, tmux, rex or
+  a plugin's), `ctx.links.runnerNamed(name)` a specific one. `start` runs any long-lived command under a label,
+  `alive`/`stop` take that label, and `attach(conversation, label)` returns how to show it (`host.attach(plan)` in a tab
+  action shows it: Rex brings its window forward, tmux takes over the terminal until you detach). A runner plugin
+  implements all four; the processes plugin runs its commands this way.
 
 ### Bundles
 

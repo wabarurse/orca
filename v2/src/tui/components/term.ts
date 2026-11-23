@@ -21,5 +21,6 @@ export type Terminal = {
   scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void;
   onAction(cb: (action: ScreenAction) => void): void;
   selection(): string;
+  handOver(argv: string[]): Promise<number>;
   released?: Promise<void>;
 };

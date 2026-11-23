@@ -1,7 +1,7 @@
 import type { Result } from "../../config";
 import { defineUi, type PluginContext, type PluginUi, type Tone } from "../../core/plugins";
 import { settled } from "../../core/tools/registry";
-import { getProc, listProcs, stopProc, tail, type Proc } from "./store";
+import { getProc, listProcs, procLabel, stopProc, tail, type Proc } from "./store";
 
 const runtime = (proc: Proc): string => `${Math.round(((proc.endedAt === null ? Date.now() : Date.parse(proc.endedAt)) - Date.parse(proc.startedAt)) / 1000)}s`;
 const tone = (proc: Proc): Tone =>
@@ -9,18 +9,18 @@ const tone = (proc: Proc): Tone =>
 
 async function procs(ctx: PluginContext): Promise<Result<Proc[]>> {
   const dir = await ctx.data("conversation");
-  return dir.ok ? listProcs(dir.data) : dir;
+  return dir.ok ? listProcs(dir.data, ctx) : dir;
 }
 
 async function stop(id: string, host: PluginContext, confirm: (question: string) => Promise<boolean>): Promise<string> {
   const dir = await host.data("conversation");
   if (!dir.ok) return dir.error;
-  const found = await getProc(dir.data, id);
+  const found = await getProc(dir.data, id, host);
   if (!found.ok) return found.error;
   const proc = found.data;
   if (proc === null || proc.state !== "running") return `${id} is not running`;
   if (!await confirm(`stop ${id}?`)) return "";
-  await stopProc(dir.data, proc);
+  await stopProc(dir.data, proc, host);
   return `stopped ${id}`;
 }
 
@@ -34,14 +34,27 @@ const ui: PluginUi = defineUi({
       info: `${runtime(p)} · ${p.owner}`, tone: tone(p) })),
     details: async (row, ctx) => {
       const dir = settled(await ctx.data("conversation"));
-      const proc = settled(await getProc(dir, row.id));
+      const proc = settled(await getProc(dir, row.id, ctx));
       if (proc === null) return [];
       return [
-        { title: "Process", lines: [proc.command, `${proc.state}${proc.code === null ? "" : ` (exit ${proc.code})`} · pid ${proc.pid} · ${runtime(proc)}`, `by ${proc.owner} in ${proc.cwd}`, `started ${proc.startedAt}`] },
+        { title: "Process", lines: [proc.command, `${proc.state}${proc.code === null ? "" : ` (exit ${proc.code})`} · ${proc.pid === null ? `in ${proc.runner} (Enter attaches)` : `pid ${proc.pid}`} · ${runtime(proc)}`, `by ${proc.owner} in ${proc.cwd}`, `started ${proc.startedAt}`] },
         { title: "Output", lines: await tail(dir, proc.id, 40) },
       ];
     },
     actions: [{
+      key: "enter", label: "attach",
+      run: async (row, host) => {
+        if (row === null) return;
+        const proc = settled(await getProc(settled(await host.data("conversation")), row.id, host));
+        if (proc === null) return;
+        if (proc.pid !== null) { host.note(`${proc.id} runs without a window; pick tmux or rex with /mux for new commands`); return; }
+        const runner = await host.links.runnerNamed(proc.runner);
+        if (runner === null) { host.note(`${proc.id} runs in ${proc.runner}, which is off in this bubble`); return; }
+        const plan = await runner.attach(host.conversation, procLabel(proc.id));
+        if (!plan.ok) { host.note(plan.error); return; }
+        await host.attach(plan.data);
+      },
+    }, {
       key: "s", label: "stop",
       run: async (row, host) => {
         if (row === null) return;

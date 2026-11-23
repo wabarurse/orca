@@ -34,21 +34,21 @@ const plugin: Plugin = definePlugin({
           if (command.trim().length === 0) return "refused: start needs a command";
           if (SUDO.test(command)) return "refused: sudo is not allowed";
           const timeoutMs = typeof input.timeout_ms === "number" && input.timeout_ms > 0 ? Math.floor(input.timeout_ms) : null;
-          const proc = await startProc(dir, { owner: ctx.agent, command, cwd: ctx.cwd, env: agentEnv(ctx.conversation, ctx.agent, ctx.data), timeoutMs });
-          return `started ${proc.id} (pid ${proc.pid})`;
+          const proc = await startProc(dir, { owner: ctx.agent, command, cwd: ctx.cwd, env: agentEnv(ctx.conversation, ctx.agent, ctx.data), timeoutMs }, ctx);
+          return `started ${proc.id} (${proc.pid === null ? `in a ${proc.runner} window; the user can attach to it` : `pid ${proc.pid}`})`;
         }
         if (input.action === "list") {
-          const procs = await listProcs(dir);
+          const procs = await listProcs(dir, ctx);
           if (!procs.ok) return `refused: ${procs.error}`;
           return procs.data.length === 0 ? "no processes" : procs.data.map(describe).join("\n");
         }
         const id = typeof input.id === "string" ? input.id : "";
-        const found = await getProc(dir, id);
+        const found = await getProc(dir, id, ctx);
         if (!found.ok) return `refused: ${found.error}`;
         if (found.data === null) return `refused: no process ${id}`;
         let proc = found.data;
         if (input.action === "stop") {
-          proc = await stopProc(dir, proc);
+          proc = await stopProc(dir, proc, ctx);
           return ended(proc, (await tail(dir, id, 20)).map(line => `  ${line}`));
         }
         if (input.action === "output") {
@@ -63,7 +63,7 @@ const plugin: Plugin = definePlugin({
           while (proc.state === "running" && Date.now() < until) {
             ctx.signal.throwIfAborted();
             await Bun.sleep(Math.min(250, Math.max(0, until - Date.now())));
-            const latest = await getProc(dir, id);
+            const latest = await getProc(dir, id, ctx);
             proc = latest.ok && latest.data !== null ? latest.data : proc;
           }
           ctx.signal.throwIfAborted();
@@ -85,6 +85,10 @@ const plugin: Plugin = definePlugin({
   bundles: [],
   retention: [],
   guard: [],
+  provides: [],
+  uses: [],
+  emits: [],
+  on: [],
   ui: "./ui.ts",
   background: "./background.ts",
 });

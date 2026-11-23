@@ -1,8 +1,18 @@
 import { join } from "node:path";
-import { definePlugin, type Plugin } from "../../core/plugins";
+import { z } from "zod";
+import { defineEvent, definePlugin, defineService, type Links, type Plugin } from "../../core/plugins";
 import { readPins, shownPins, writePins } from "./store";
 
 const MAX = 200;
+
+async function addPin(dir: string, text: string, by: string, links: Links): Promise<string> {
+  const read = await readPins(dir);
+  const pins = read.ok ? read.data : [];
+  const pin = { id: `p${pins.length + 1}`, text, by, at: new Date().toISOString() };
+  await writePins(dir, [...pins, pin]);
+  await links.emit("pinned", { id: pin.id, text });
+  return pin.id;
+}
 
 const plugin: Plugin = definePlugin({
   name: "example",
@@ -28,9 +38,7 @@ const plugin: Plugin = definePlugin({
         }
         const text = typeof input.text === "string" ? input.text.trim() : "";
         if (text.length === 0) return "refused: a pin needs text";
-        const pin = { id: `p${pins.length + 1}`, text, by: ctx.agent, at: new Date().toISOString() };
-        await writePins(dir, [...pins, pin]);
-        return `pinned ${pin.id}`;
+        return `pinned ${await addPin(dir, text, ctx.agent, ctx.links)}`;
       },
     },
   }],
@@ -65,6 +73,14 @@ const plugin: Plugin = definePlugin({
       await writePins(folder.data, (await shownPins(folder)).filter(p => !ids.includes(p.id)));
     },
   }],
+  provides: [defineService("add", "pin a note for this conversation; returns { id }", z.object({ text: z.string().min(1).max(MAX) }), async (input, ctx) => {
+    const folder = await ctx.data("conversation");
+    if (!folder.ok) return folder;
+    return { ok: true, data: { id: await addPin(folder.data, input.text, ctx.from, ctx.links) } };
+  })],
+  uses: [],
+  emits: [defineEvent("pinned", "a pin was added: { id, text }", z.object({ id: z.string(), text: z.string() }))],
+  on: [],
   ui: "./ui.ts",
   background: "./background.ts",
 });
