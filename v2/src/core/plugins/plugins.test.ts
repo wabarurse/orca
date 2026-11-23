@@ -47,6 +47,7 @@ describe("plugins", () => {
     expect(worker.tools.find(t => t.spec.name === "bash")).toBe(replacing.tools[0]?.tool);
     expect(worker.tools.map(t => t.spec.name)).not.toContain("extra");
     expect(worker.system).toContain("[rep] use the new bash");
+    expect(worker.system).toContain("Plugins on in this bubble (1; the user turns them on or off with Ctrl+P):\n\n- rep: rep");
     const orc = await assembled({ conversation: c.id, agent: "orchestrator", bundle: "orchestrator", branch: null, cwd: home.path(), directory: home.path(), trusted: false });
     expect(orc.tools.map(t => t.spec.name)).toContain("extra");
     expect(orc.tools.map(t => t.spec.name)).not.toContain("write");

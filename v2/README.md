@@ -71,8 +71,10 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
 
 - **Where**: built-in in `src/plugins/` (listed in `src/plugins/index.ts`), user plugins in `~/.orca2/plugins/`,
   a folder's own in `.orca2/plugins/` (unless the folder is untrusted).
-- **Enablement**: `plugins = [...]` in `~/.orca2/config.toml`, then each bubble's on/off lists (`/plugins` in the TUI,
-  `orca2 plugin enable|disable <name> --bubble`). Read when an agent starts, so tools and prompt stay fixed for a run.
+- **Enablement**: `plugins = [...]` in `~/.orca2/config.toml` is the default for every bubble (without the line: images,
+  pr-watch, processes, questions, rex, sandbox, tasks and tmux); each bubble then has its own on/off lists (Ctrl+P → `t`
+  in the TUI, or `orca2 plugin enable|disable <name> --bubble`). The footer's `N plugins` and the agent's "Plugins on in
+  this bubble" list are the same set. Read when an agent starts, so tools and prompt stay fixed for a run.
 - **Approval**: a user plugin loads only while its exact content (a hash of its files) is approved. `orca2 plugin
   enable` shows what it adds and asks at a terminal; without one it refuses, so an agent cannot enable a plugin.
 - **Storage**: `$ORCA_DATA/<plugin>/` (conversation), `$ORCA_DATA/bubble/<plugin>/`, `$ORCA_DATA/global/<plugin>/`.
