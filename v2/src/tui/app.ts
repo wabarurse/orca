@@ -272,6 +272,7 @@ export class App {
       else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
       else if (key.name === "a") await this.openPage(0);
       else if (key.name === "n") await this.newConversation();
+      else if (key.name === "h" || key.name === "l") { await this.cycle(key.name === "h" ? -1 : 1); return; }
       else if (key.name === "v") await this.pasteImage();
       else if (key.name === "j") this.composer = editor.newline(this.composer);
       else if (key.name === "u") this.composer = editor.killToStart(this.composer);
@@ -441,7 +442,7 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
