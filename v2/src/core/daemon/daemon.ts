@@ -10,6 +10,7 @@ import type { RollingCompactor } from "../loop/rolling";
 import { availablePlugins } from "../plugins/loader";
 import { enabledNames } from "../plugins/enable";
 import type { BackgroundContext, Watcher } from "../plugins/types";
+import { backgroundContext } from "../plugins/context";
 import { fileConfirm, runtimeFor, stopAgent } from "../runner/runtime";
 import { listRuns, live, updateRun } from "../runner/runs";
 import { openSession } from "../session";
@@ -38,8 +39,7 @@ async function backgroundWatchers(conversation: string, directory: string): Prom
     const loadedBackground = await loaded.background();
     const background = loadedBackground.ok ? loadedBackground.data : null;
     if (background === null) continue;
-    const ctx: BackgroundContext = { plugin: name, conversation, directory, data: scope => pluginData(conversation, name, scope),
-      notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
+    const ctx = backgroundContext(conversation, name, directory);
     for (const watcher of background.watchers) out.push({ watcher, ctx, next: 0, running: false });
   }
   return out;

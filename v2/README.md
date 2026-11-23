@@ -34,7 +34,9 @@ bun run check && bun run lint && bun test
   the plugins' background watchers and an exit watchdog. TUIs and `orca2 msg` only read files and write the inbox.
 - **The plain runner** (`src/core/runner/`): agents are detached child processes with a log file each and a run
   record (`runs/<agent>.json`). Workers in a Git checkout get a worktree under `~/.orca2/worktrees/`.
-  Runner plugins (tmux, rex) add windows you can watch.
+  Runner plugins (tmux, rex) add windows you can watch; every runner starts the agent through the core's launch
+  command (`launchCommand`: the environment in a private self-deleting file, output teed to the log). `/mux` in the
+  TUI lists plain and every enabled runner plugin and saves the choice as `runner` in config.toml.
 - **Memory**: workers compact in the foreground at 90% of the window; the orchestrator keeps background rolling
   memory from 25% (small model, ~50k verbatim tail, the newest exchange always whole). Everything compaction
   replaces is archived in `archive.sqlite` first, and `memory search` finds it.
@@ -80,6 +82,15 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
   orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]`.
+
+### Built-in plugins
+
+On by default: `questions` (`ask` tool, Questions tab on Ctrl+Q), `tasks` (`task` tool, Tasks tab on Ctrl+T, a task
+per spawned branch, the Tasks section of rolling memory), `pr-watch` (merged/blocked notices for linked PRs, PRs
+tab), `processes` (`process` tool for long commands, Processes tab), `images` (`images` tool, Images tab),
+`sandbox` (`sandbox` tool: writes confined to a scratch folder, sandbox-exec or bwrap). Opt-in: `tmux` and `rex`
+(runners: agents in windows you can watch; `/mux` or `runner = "tmux"`), `example`. A plugin imports only from the
+core (`src/core`, `src/config`, `src/api`), never from another plugin; `src/independence.test.ts` checks it.
 
 ## Layout
 

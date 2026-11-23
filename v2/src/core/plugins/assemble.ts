@@ -28,7 +28,7 @@ export type Assembled = {
   problems: PluginProblem[];
 };
 
-export type AssembleInput = { conversation: string; agent: string; bundle: string; cwd: string; directory: string; trusted: boolean };
+export type AssembleInput = { conversation: string; agent: string; bundle: string; branch: string | null; cwd: string; directory: string; trusted: boolean };
 
 export async function assemble(input: AssembleInput): Promise<Result<Assembled>> {
   const { plugins: available, problems } = await availablePlugins(input.directory, input.trusted);
@@ -59,7 +59,7 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
     }
   }
 
-  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, cwd: input.cwd,
+  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, branch: input.branch, cwd: input.cwd,
     data: scope => pluginData(input.conversation, loaded.plugin.name, scope) });
   const bind = <H>(pick: (loaded: LoadedPlugin) => H[]): Bound<H>[] => used.flatMap(loaded => pick(loaded).map(hook => ({ hook, ctx: ctxFor(loaded) })));
   const hooks: LoopHooks = {

@@ -24,7 +24,7 @@ export async function loadUis(conversation: string): Promise<{ uis: BoundUi[]; f
     if (!loadedUi.ok) { notes.push(`plugin ${name} ui: ${loadedUi.error}`); continue; }
     const ui = loadedUi.data;
     if (ui === null) continue;
-    const ctx: PluginContext = { plugin: name, conversation, agent: "user", role: "orchestrator", cwd: directory ?? "", data: scope => pluginData(conversation, name, scope) };
+    const ctx: PluginContext = { plugin: name, conversation, agent: "user", role: "orchestrator", branch: null, cwd: directory ?? "", data: scope => pluginData(conversation, name, scope) };
     uis.push({ name, ui, ctx });
     for (const [tool, line] of Object.entries(ui.toolLines)) registerToolLine(tool, line.label, line.summary);
     for (const [tool, fold] of Object.entries(ui.folds)) folds.set(tool, fold);

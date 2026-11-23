@@ -16,7 +16,6 @@ const plugin: Plugin = definePlugin({
         input_schema: { type: "object", properties: { action: { type: "string", enum: ["add", "list", "remove"] }, text: { type: "string" }, id: { type: "string" } }, required: ["action"] } },
       async run(input, ctx) {
         const dir = join(ctx.data, "example");
-        await Bun.write(join(dir, ".keep"), "");
         const read = await readPins(dir);
         if (!read.ok) return `refused: ${read.error}`;
         const pins = read.data;

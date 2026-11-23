@@ -26,7 +26,7 @@ test("-p prints the final answer; --json streams every event and ends with the a
   const Event = z.looseObject({ kind: z.string(), conversation: z.string(), text: z.string().optional(), outcome: z.object({ text: z.string() }).optional(),
     span: z.object({ id: z.string(), kind: z.string(), label: z.string(), agent: z.string(), startedAt: z.string(), durationMs: z.number().optional() }).optional() });
   const events = lines.trim().split("\n").map(line => Event.parse(JSON.parse(line)));
-  expect(events.filter(e => !e.kind.startsWith("span_")).map(e => e.kind)).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
+  expect(events.filter(e => !e.kind.startsWith("span_") && e.kind !== "notice").map(e => e.kind)).toEqual(["start", "input", "text", "tool_start", "tool_end", "text", "end"]);
   const spanEvents = events.flatMap(e => e.span === undefined ? [] : [`${e.kind} ${e.span.kind} ${e.span.label}`]);
   expect(spanEvents).toEqual([
     "span_start prep session", "span_end prep session",
