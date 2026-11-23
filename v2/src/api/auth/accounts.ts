@@ -35,7 +35,7 @@ export async function accounts(selected?: AccountRef): Promise<Account[]> {
       const ok = await read(profile).then(tokens => tokens !== null).catch(() => false);
       out.push({ id: `${name}:${profile}`, provider: name, profile, ok, active: selected?.provider === name && selected.profile === profile,
         source: ok ? (name === "anthropic" ? "claude code (claude subscription)" : "codex (chatgpt subscription)")
-          : `not signed in or invalid credentials; /login ${name} ${profile}` });
+          : `not signed in or invalid credentials; orca2 login ${name} ${profile}` });
     }
   }
   return out;

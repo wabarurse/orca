@@ -18,6 +18,7 @@ const printable = (text: string): boolean => text.length > 0 && !/[\x00-\x1f\x7f
 export function keyFrom(event: KeyEvent): Key | null {
   if (event.eventType === "release") return null;
   if (event.name === "linefeed") return { name: "j", ctrl: true };
+  if (event.sequence === "\b") return { name: "h", ctrl: true };
   const named = NAMED[event.name];
   if (named !== undefined) return { name: named, ...mods(event) };
   const text = event.name === "space" ? " " : event.sequence;

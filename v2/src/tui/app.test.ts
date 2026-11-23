@@ -93,6 +93,37 @@ describe("tui", () => {
     a.stop();
   });
 
+  test("/effort and /fast open v1's menus: the current choice marked and selected, Enter saves it for the chat and the header shows it", async () => {
+    await saveConfig({ model: "claude-opus-5-5" });
+    const t = await app(home.path());
+    await t.type("/effort");
+    await t.press({ name: "enter" });
+    const menu = await t.shows("effort for claude-opus-5-5");
+    expect(menu).toContain("↑↓ enter   esc cancels");
+    expect(menu).toMatch(/❯ ● default/);
+    await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
+    await t.shows("effort for claude-opus-5-5: medium");
+    const account = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+    expect(account()).toContain("claude-opus-5-5 · medium");
+    const id = t.app["conversation"].id;
+    expect((await readConversation(id))?.effort).toBe("medium");
+    await t.type("/effort");
+    await t.press({ name: "enter" });
+    expect(await t.shows("❯ ● medium")).toContain("❯ ● medium");
+    await t.press({ name: "escape" });
+    await t.type("/fast");
+    await t.press({ name: "enter" });
+    expect(await t.shows("❯ ● off")).toContain("fast mode for claude-opus-5-5");
+    await t.press({ name: "down" }, { name: "enter" });
+    await t.shows("fast for claude-opus-5-5: on");
+    expect(account()).toContain("claude-opus-5-5 · medium · fast");
+    expect((await readConversation(id))?.fast).toBe(true);
+    await t.type("/effort turbo");
+    await t.press({ name: "enter" });
+    expect(await t.shows("unsupported")).toContain("effort turbo is unsupported for claude-opus-5-5");
+    await saveConfig({ model: "claude-sonnet-5-5" });
+  });
+
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
     registerBuiltins(BUILTINS);
     await saveConfig({ plugins: ["tmux"], runner: "plain" });
@@ -166,7 +197,7 @@ describe("tui", () => {
     a.stop();
   });
 
-  test("Ctrl+N opens a new chat as another header tab; Alt+← switches back; /close closes the open one", async () => {
+  test("Ctrl+N opens a new chat as another header tab; Ctrl+H/Ctrl+L and Alt+←/→ switch between them; /close closes the open one", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-tabs-"));
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
@@ -186,13 +217,33 @@ describe("tui", () => {
     await newChat();
     expect(tabs().map(x => x.label)).toEqual([first, second, a.conversationId()]);
     expect(tabs().findIndex(x => x.active)).toBe(2);
-    await t.press({ name: "left", alt: true });
+    await t.press({ name: "h", ctrl: true });
+    expect(a.conversationId()).toBe(second);
+    await t.press({ name: "h", ctrl: true });
+    expect(a.conversationId()).toBe(first);
+    await t.press({ name: "l", ctrl: true }, { name: "l", ctrl: true }, { name: "left", alt: true });
     expect(a.conversationId()).toBe(second);
     await t.type("/close");
     await t.press({ name: "enter" });
     expect(tabs().length).toBe(2);
     expect(tabs().map(x => x.label)).not.toContain(second);
     a.stop();
+  });
+
+  test("opening orca2 in a folder shows every chat of that folder as a tab, oldest first, on the newest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-all-"));
+    const older = await createConversation(dir, "older");
+    await Bun.sleep(5);
+    const newer = await createConversation(dir, "newer");
+    await createConversation(home.path(), "elsewhere");
+    const t = await app(dir);
+    const s = t.screen();
+    const tabs = s?.kind === "chat" && s.header !== null ? s.header.tabs : [];
+    expect(tabs.map(x => x.label)).toEqual(["older", "newer"]);
+    expect(t.app.conversationId()).toBe(newer.id);
+    await t.press({ name: "h", ctrl: true });
+    expect(t.app.conversationId()).toBe(older.id);
+    t.app.stop();
   });
 
   test("/rename renames the open chat everywhere it shows, and its bubble while that still has the old name", async () => {

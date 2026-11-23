@@ -1,4 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
+import { readStatus } from "./daemon/channel";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { paths } from "../config";
@@ -72,6 +73,7 @@ test("orchestrator → worker → report → orchestrator, through the daemon an
   expect(Bun.spawnSync(["git", "branch", "--show-current"], { cwd: worktree }).stdout.toString().trim()).toBe("fix");
   expect(existsSync(join(repo, "hello.txt"))).toBe(false);
   expect((await readRun(c.id, "worker-fix"))?.state).toBe("reported");
+  expect((await readStatus(c.id))?.contextTokens).toBe(15);
   const inbox = transcript.all().flatMap(e => e.type === "message" ? e.inbox : []).map(m => `${m.from}: ${m.text}`);
   expect(inbox).toEqual(["user: please add hello.txt", "worker-fix: done: wrote hello.txt"]);
 

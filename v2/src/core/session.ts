@@ -1,7 +1,7 @@
 import { rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { provider as loadProvider } from "../api";
-import { providerFor } from "../api/model";
+import { providerFor, validateSettings, type Effort, type RequestSettings } from "../api/model";
 import { fail, loadConfig, ok, paths, type Result } from "../config";
 import { ensureDataDirs } from "./bubbles";
 import { readConversation } from "./conversations";
@@ -45,7 +45,18 @@ export async function resolveModel(conversation: string, override: string | null
   if (scripted !== undefined && scripted.length > 0) return ok({ model, provider: scriptedProvider(scripted), settings: null, contextLimit: null });
   const name = providerFor(model);
   const provider = await loadProvider(name, { profile: name === "anthropic" ? config.account : config.openaiAccount });
-  return provider.ok ? ok({ model, provider: provider.data, settings: null, contextLimit: null }) : provider;
+  return provider.ok ? ok({ model, provider: provider.data, settings: requestSettings(model, meta?.effort ?? null, meta?.fast ?? false), contextLimit: null }) : provider;
+}
+
+const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
+
+export function requestSettings(model: string, effort: string | null, fast: boolean): RequestSettings | null {
+  const level = EFFORTS.find(e => e === effort);
+  const wanted: RequestSettings = { ...(level !== undefined ? { effort: level } : {}), ...(fast ? { fast: true } : {}) };
+  const checked = validateSettings(model, wanted);
+  if (checked.ok) return Object.keys(checked.data).length > 0 ? checked.data : null;
+  const effortOnly = validateSettings(model, level !== undefined ? { effort: level } : {});
+  return effortOnly.ok && Object.keys(effortOnly.data).length > 0 ? effortOnly.data : null;
 }
 
 export async function openSession(input: SessionInput): Promise<Result<Session>> {

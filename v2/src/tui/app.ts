@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
+import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
@@ -19,7 +20,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
+import { bold, dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
@@ -27,11 +28,12 @@ import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf"
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
+import { accountChoices, effortChoices, fastChoices, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
   | { kind: "input"; prompt: string; state: editor.EditState; resolve: (text: string | null) => void }
-  | { kind: "pick"; title: string; options: string[]; index: number; resolve: (index: number | null) => void };
+  | { kind: "pick"; title: string; options: string[]; current: number | null; index: number; resolve: (index: number | null) => void };
 
 type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string; archiveOpen: boolean };
 
@@ -82,6 +84,7 @@ export class App {
   private account = "";
   private bubbleName: string | null = null;
   private model = "";
+  private settings = "";
   private timer: ReturnType<typeof setInterval> | null = null;
   private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
@@ -114,7 +117,9 @@ export class App {
   private failed(error: unknown): void { this.flash(errorMessage(error), true); }
 
   async start(): Promise<void> {
-    const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
+    const here = (await listConversations()).filter(c => c.directory === this.deps.directory);
+    const existing = here.at(0);
+    this.openTabs = [...here].reverse().map(c => ({ id: c.id, name: c.name, busy: false }));
     await this.switchTo(existing ?? await createConversation(this.deps.directory, null));
     const fresh = existing === undefined;
     this.deps.terminal.onKey(key => { this.key(key).catch((error: unknown) => { this.failed(error); }); });
@@ -206,6 +211,7 @@ export class App {
     const config = await loadConfig();
     const meta = await readConversation(id);
     this.model = meta?.model ?? config.model;
+    this.settings = settingsLabel(meta);
     this.bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
     this.noBubble = meta?.noBubble === true;
     this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
@@ -226,12 +232,12 @@ export class App {
 
   private ask(modal: { kind: "confirm"; question: string }): Promise<boolean>;
   private ask(modal: { kind: "input"; prompt: string; initial: string }): Promise<string | null>;
-  private ask(modal: { kind: "pick"; title: string; options: string[] }): Promise<number | null>;
-  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[] }): Promise<boolean | string | number | null> {
+  private ask(modal: { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<number | null>;
+  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<boolean | string | number | null> {
     return new Promise(resolve => {
       if (modal.kind === "confirm") this.modal = { kind: "confirm", question: modal.question, resolve: yes => { this.modal = null; resolve(yes); this.draw(); } };
       else if (modal.kind === "input") this.modal = { kind: "input", prompt: modal.prompt, state: { text: modal.initial, cursor: modal.initial.length }, resolve: text => { this.modal = null; resolve(text); this.draw(); } };
-      else this.modal = { kind: "pick", title: modal.title, options: modal.options, index: 0, resolve: index => { this.modal = null; resolve(index); this.draw(); } };
+      else this.modal = { kind: "pick", title: modal.title, options: modal.options, current: modal.current, index: Math.max(0, modal.current ?? 0), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
       this.draw();
     });
   }
@@ -240,7 +246,7 @@ export class App {
     return { ...bound.ctx, note: text => { this.flash(text); },
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
-      pick: (title, options) => this.ask({ kind: "pick", title, options }),
+      pick: (title, options) => this.ask({ kind: "pick", title, options, current: null }),
       say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
       open: async path => { await this.deps.open(path); },
       attach: async plan => { await this.attach(plan); } };
@@ -268,6 +274,7 @@ export class App {
       else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
       else if (key.name === "a") await this.openPage(0);
       else if (key.name === "n") await this.newConversation();
+      else if (key.name === "h" || key.name === "l") { await this.cycle(key.name === "h" ? -1 : 1); return; }
       else if (key.name === "v") await this.pasteImage();
       else if (key.name === "j") this.composer = editor.newline(this.composer);
       else if (key.name === "u") this.composer = editor.killToStart(this.composer);
@@ -386,7 +393,7 @@ export class App {
 
   private async chooseBubble(title: string): Promise<BubbleChoice | null> {
     const { options, choices } = await bubbleChoices(this.deps.directory);
-    const pick = await this.ask({ kind: "pick", title, options });
+    const pick = await this.ask({ kind: "pick", title, options, current: null });
     return pick === null ? null : choices[pick] ?? null;
   }
 
@@ -437,25 +444,67 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
-    if (name === "model") {
-      const model = args.trim().length > 0 ? args.trim() : await this.ask({ kind: "input", prompt: "model ", initial: this.model });
-      if (model === null || model.length === 0) return;
-      await saveConversation({ ...this.conversation, model });
-      this.current = { conversation: { ...this.conversation, model }, transcript: this.transcript };
-      this.flash(`model ${model} from the next request`);
-      return;
-    }
+    if (name === "model" || name === "effort" || name === "fast" || name === "accounts") { await this.setting(name, args.trim()); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
     if (name === "mux") { await this.mux(args.trim()); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`, true); }
+  }
+
+  private async choose<T>(title: string, choices: Choice<T>[]): Promise<T | null> {
+    if (choices.length === 0) return null;
+    const at = choices.findIndex(c => c.current);
+    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.label), current: at === -1 ? null : at });
+    return picked === null ? null : choices[picked]?.value ?? null;
+  }
+
+  private async setting(name: "model" | "effort" | "fast" | "accounts", arg: string): Promise<void> {
+    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
+    const model = conversation.model ?? (await loadConfig()).model;
+    let saved: Result<Conversation> | null = null;
+    let note = "";
+    if (name === "model") {
+      let wanted: string | null = arg;
+      if (wanted.length === 0) {
+        const offered = await modelChoices(model);
+        if (!offered.ok) { this.flash(offered.error, true); return; }
+        wanted = await this.choose("switch model   (/accounts for another provider)", offered.data);
+      }
+      if (wanted === null) return;
+      saved = await setModel(conversation, wanted);
+      note = `model ${wanted} from the next request`;
+    } else if (name === "effort") {
+      const level = arg.length > 0 ? arg : await this.choose(`effort for ${model}   (/effort <level|default> sets directly)`, effortChoices(model, conversation.effort));
+      if (level === null) return;
+      saved = await setEffort(conversation, level);
+      note = `effort for ${model}: ${level} from the next request`;
+    } else if (name === "fast") {
+      if (arg.length > 0 && arg !== "on" && arg !== "off") { this.flash("usage: /fast [on|off]", true); return; }
+      const on = arg.length > 0 ? arg === "on" : await this.choose(`fast mode for ${model}   (/fast on|off sets directly)`, fastChoices(conversation.fast));
+      if (on === null) return;
+      saved = await setFast(conversation, on);
+      note = `fast for ${model}: ${on ? "on" : "off"} from the next request`;
+    } else {
+      const account = await this.choose("accounts: enter uses one for this chat", await accountChoices(model));
+      if (account === null) return;
+      if (!account.ok) { this.flash(`${account.id} is not signed in: run orca2 login ${account.provider}${account.profile === "default" ? "" : ` ${account.profile}`}`, true); return; }
+      const used = await useAccount(conversation, account);
+      saved = used.ok ? ok(used.data.conversation) : used;
+      note = used.ok ? used.data.note : "";
+    }
+    if (!saved.ok) { this.flash(saved.error, true); return; }
+    this.current = { conversation: saved.data, transcript: this.transcript };
+    this.model = saved.data.model ?? model;
+    this.settings = settingsLabel(saved.data);
+    this.lastSlow = 0;
+    this.flash(note);
   }
 
   private commands(): { name: string }[] {
@@ -475,7 +524,8 @@ export class App {
   private async pickRunner(conversation: string): Promise<string | null> {
     const names = await runnerNames(conversation);
     const current = (await loadConfig()).runner;
-    const picked = await this.ask({ kind: "pick", title: "runner for new agents", options: names.map(n => n === current ? `${n} (current)` : n) });
+    const at = names.indexOf(current);
+    const picked = await this.ask({ kind: "pick", title: "runner for new agents", options: names, current: at === -1 ? null : at });
     return picked === null ? null : names[picked] ?? null;
   }
 
@@ -701,8 +751,9 @@ export class App {
       footer.push(fit(this.modalLine(this.modal), cols));
       if (this.modal.kind === "pick") {
         const pick = this.modal;
-        const start = Math.max(0, Math.min(pick.index - Math.floor(PICK_ROWS / 2), pick.options.length - PICK_ROWS));
-        pick.options.slice(start, start + PICK_ROWS).forEach((option, i) => { footer.push(fit(`${start + i === pick.index ? "❯" : " "} ${option}`, cols)); });
+        const start = Math.max(0, Math.min(pick.index - PICK_ROWS + 1, pick.options.length - PICK_ROWS));
+        const marks = pick.current !== null;
+        pick.options.slice(start, start + PICK_ROWS).forEach((option, i) => { footer.push(fit(`${start + i === pick.index ? bold("❯") : " "} ${marks ? `${start + i === pick.current ? "●" : " "} ` : ""}${option}`, cols)); });
         if (pick.options.length > PICK_ROWS) footer.push(dim(`${pick.index + 1} of ${pick.options.length}`));
       }
     }
@@ -713,17 +764,29 @@ export class App {
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
-      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.conversation.directory], fin };
+      account: this.account.length > 0 ? `${this.account} · ${this.model}${this.settings}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
-      welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
+      updates: this.events.length, welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }
 
   private modalLine(modal: Modal): string {
     if (modal.kind === "confirm") return `${modal.question}  y yes · n/esc no`;
-    if (modal.kind === "pick") return `${modal.title}  ↑↓ choose · enter · esc`;
+    if (modal.kind === "pick") return dim(`${modal.title}   ↑↓ enter   esc cancels`);
     return `${modal.prompt}${modal.state.text}`;
   }
+}
+
+const tokens = (n: number): string => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+
+export function settingsLabel(conversation: Conversation | null): string {
+  if (conversation === null) return "";
+  return `${conversation.effort !== null ? ` · ${conversation.effort}` : ""}${conversation.fast ? " · fast" : ""}`;
+}
+
+export function contextLine(used: number | null, model: string): string {
+  const window = contextWindow({}, model);
+  return ` · ctx ${used === null ? "-" : tokens(used)}/${window.estimated ? "~" : ""}${tokens(window.limit)}`;
 }
 
 function edit(state: editor.EditState, key: Key): editor.EditState {
