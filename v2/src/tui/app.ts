@@ -17,7 +17,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { dim, editor, fit, noColour, pastel, readClipboardImage, screens, whaleRows, wordWrap, type Key, type Terminal } from "./components";
+import { dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
@@ -38,6 +38,8 @@ export type AppDeps = {
   now: () => number;
   ensureDaemon: (conversation: string) => Promise<Result<number>>;
   clipboard: () => Promise<Result<Uint8Array>>;
+  copy: (text: string) => Promise<Result<null>>;
+  openUrl: (url: string) => Promise<Result<null>>;
   exit: (code: number) => void;
 };
 
@@ -472,6 +474,14 @@ export class App {
     } else if (action.kind === "open") {
       const tab = this.tabs().findIndex(t => t.id === action.tab);
       if (tab !== -1) this.openPage(tab).catch((error: unknown) => { this.failed(error); });
+    } else if (action.kind === "copy") {
+      const text = action.text;
+      this.deps.copy(text).then(done => { this.flash(done.ok ? `copied ${text.length} character${text.length === 1 ? "" : "s"}` : `copy failed: ${done.error}`, !done.ok); },
+        (error: unknown) => { this.failed(error); });
+    } else {
+      const url = action.url;
+      if (!OPENABLE.test(url)) { this.flash(`not opened: ${url}`); return; }
+      this.deps.openUrl(url).then(done => { this.flash(done.ok ? `opened ${url}` : `${done.error}: ${url}`, !done.ok); }, (error: unknown) => { this.failed(error); });
     }
   }
 
@@ -653,6 +663,16 @@ function edit(state: editor.EditState, key: Key): editor.EditState {
   }
 }
 
+async function openUrl(url: string): Promise<Result<null>> {
+  if (process.env.SSH_CONNECTION !== undefined) return fail("over ssh, open it yourself");
+  const opener = process.platform === "darwin" ? "/usr/bin/open" : process.platform === "linux" ? Bun.which("xdg-open") : null;
+  if (opener === null) return fail("no browser opener (xdg-open) found");
+  try {
+    const exited = await Bun.spawn([opener, url], { stdin: "ignore", stdout: "ignore", stderr: "ignore" }).exited;
+    return exited === 0 ? ok(null) : fail(`${opener} exited ${exited}`);
+  } catch (error) { return fail(errorMessage(error)); }
+}
+
 export async function startTui(directory: string): Promise<number> {
   const { openTuiTerminal } = await import("./otui");
   const opened = openTuiTerminal();
@@ -662,6 +682,8 @@ export async function startTui(directory: string): Promise<number> {
     const app = new App({ terminal, directory, now: () => Date.now(),
       ensureDaemon: conversation => ensureDaemon(conversation, null),
       clipboard: async () => { const image = await readClipboardImage(); return image.ok ? ok(image.data.bytes) : image; },
+      copy: text => writeClipboardText(text),
+      openUrl,
       exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
     const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };
     terminal.launched.then(launched => { if (!launched.ok) abandon(launched.error); }, (error: unknown) => { abandon(errorMessage(error)); });

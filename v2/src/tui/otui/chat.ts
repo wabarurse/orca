@@ -1,6 +1,6 @@
 import { BoxRenderable, RGBA, ScrollBoxRenderable, StyledText, TextAttributes, TextRenderable, type MouseEvent, type RenderContext, type TextChunk } from "@opentui/core";
 import { CollapsiblePanelRenderable, CollapsibleRootRenderable, CollapsibleTriggerRenderable } from "@tuiparts/core/collapsible";
-import { linkAt, screens } from "../components";
+import { linkAt, linkSpanAt, screens, underlineSpan, type LinkSpan } from "../components";
 import { tabWindow } from "../components";
 import { applySgr, styledRows } from "./ansi";
 
@@ -206,6 +206,18 @@ export class ChatView {
 
   private rows(rows: string[]): TextRenderable {
     const text = new TextRenderable(this.ctx, { content: styledRows(rows), wrapMode: "none", selectable: true });
+    let hovered: { row: number; span: LinkSpan } | null = null;
+    const hover = (next: { row: number; span: LinkSpan } | null): void => {
+      if (next?.row === hovered?.row && next?.span.start === hovered?.span.start && next?.span.url === hovered?.span.url) return;
+      hovered = next;
+      text.content = styledRows(next === null ? rows : rows.map((row, i) => i === next.row ? underlineSpan(row, next.span) : row));
+    };
+    text.onMouseMove = (event: MouseEvent) => {
+      const index = event.y - text.y, row = rows[index];
+      const span = row === undefined ? undefined : linkSpanAt(row, event.x - text.x);
+      hover(span === undefined ? null : { row: index, span });
+    };
+    text.onMouseOut = () => { hover(null); };
     text.onMouseDown = (event: MouseEvent) => { this.pressed = { x: event.x, y: event.y }; };
     text.onMouseUp = (event: MouseEvent) => { this.click(event, () => {
       const row = rows[event.y - text.y];
