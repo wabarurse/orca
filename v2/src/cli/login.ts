@@ -14,6 +14,8 @@ export async function runLogin(args: string[], out: (text: string) => void): Pro
 }
 
 export async function runAccounts(out: (text: string) => void): Promise<number> {
-  for (const account of await accounts()) out(`${account.ok ? "ok " : "-- "} ${account.id.padEnd(28)} ${account.source}\n`);
+  const listed = (await accounts()).filter(account => account.ok);
+  if (listed.length === 0) out("no accounts; orca2 login anthropic|openai [profile] signs in\n");
+  for (const account of listed) out(`${account.id.padEnd(28)} ${account.source}\n`);
   return 0;
 }

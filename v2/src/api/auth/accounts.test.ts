@@ -151,8 +151,8 @@ test("environment and legacy saved API keys cannot authenticate either provider"
   await Bun.write(join(home, "credentials.json"), JSON.stringify({ openai: "unused-saved-key" }));
   expect(await refusal("anthropic", { profile: "none" })).toContain("not signed in");
   expect(await refusal("openai", { profile: "none" })).toContain("not signed in");
-  expect((await accounts()).every((account) => !account.ok && !account.active)).toBe(true);
-  expect((await accounts({ provider: "openai", profile: "default" })).filter((account) => account.active)).toHaveLength(1);
+  expect(await accounts()).toEqual([]);
+  expect(await accounts({ provider: "openai", profile: "default" })).toEqual([]);
 });
 
 test("Codex account selection stays independent of Claude and ignores API credentials", async () => {
@@ -224,6 +224,6 @@ test("profile switching updates credentials; missing selection cannot fall back 
   expect((await accounts({ provider: "anthropic", profile: "two" })).find((a) => a.id === "anthropic:two")?.active).toBe(true);
   await Bun.write(join(required(process.env.ANTHROPIC_CONFIG_DIR), "credentials", "legacy.json"), JSON.stringify({ access_token: "platform-token" }));
   expect(await refusal("anthropic", { profile: "legacy" })).toContain("not signed in");
-  expect((await accounts({ provider: "anthropic", profile: "legacy" })).find((a) => a.id === "anthropic:legacy")).toMatchObject({ ok: false, active: true });
+  expect((await accounts({ provider: "anthropic", profile: "legacy" })).find((a) => a.id === "anthropic:legacy")).toBeUndefined();
   expect(used).toHaveLength(2);
 });

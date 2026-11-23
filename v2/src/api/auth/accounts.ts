@@ -30,8 +30,7 @@ export async function accounts(selected?: AccountRef): Promise<Account[]> {
   for (const name of names) {
     const profiles = name === "anthropic" ? claudeProfiles() : codexProfiles();
     const read = name === "anthropic" ? readClaudeTokens : readCodexTokens;
-    const extra = selected?.provider === name ? [validateProfile(selected.profile)] : [];
-    for (const profile of new Set([...profiles, ...extra])) {
+    for (const profile of profiles) {
       const ok = await read(profile).then(tokens => tokens !== null).catch(() => false);
       out.push({ id: `${name}:${profile}`, provider: name, profile, ok, active: selected?.provider === name && selected.profile === profile,
         source: ok ? (name === "anthropic" ? "claude code (claude subscription)" : "codex (chatgpt subscription)")

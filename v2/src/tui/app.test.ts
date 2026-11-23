@@ -124,7 +124,7 @@ describe("tui", () => {
     await saveConfig({ model: "claude-sonnet-5-5" });
   });
 
-  test("/login offers the providers and waits for the browser sign-in, Esc cancels it; /accounts signs in an account that is not signed in yet", async () => {
+  test("/login offers the providers and waits for the browser sign-in, Esc cancels it; with no accounts /accounts says so", async () => {
     const t = await app(home.path());
     await t.type("/login");
     await t.press({ name: "enter" });
@@ -140,11 +140,7 @@ describe("tui", () => {
     await t.shows("/usage: login anthropic|openai");
     await t.type("/accounts");
     await t.press({ name: "enter" });
-    await t.shows("accounts: enter uses one");
-    await t.press({ name: "enter" });
-    await t.shows("waiting for login");
-    await t.press({ name: "escape" });
-    await t.shows("login cancelled");
+    expect(await t.shows("no accounts")).toContain("no accounts; /login signs in");
   });
 
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {

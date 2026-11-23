@@ -496,9 +496,10 @@ export class App {
       saved = await setFast(conversation, on);
       note = `fast for ${model}: ${on ? "on" : "off"} from the next request`;
     } else {
-      const account = await this.choose("accounts: enter uses one for this chat", await accountChoices(model));
+      const listed = await accountChoices(model);
+      if (listed.length === 0) { this.flash("no accounts; /login signs in"); return; }
+      const account = await this.choose("accounts: enter uses one for this chat", listed);
       if (account === null) return;
-      if (!account.ok) { await this.login({ provider: account.provider, profile: account.profile, imported: false }); return; }
       const used = await useAccount(conversation, account);
       saved = used.ok ? ok(used.data.conversation) : used;
       note = used.ok ? used.data.note : "";

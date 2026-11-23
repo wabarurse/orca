@@ -42,7 +42,7 @@ export function fastChoices(fast: boolean): Choice<boolean>[] {
 
 export async function accountChoices(model: string): Promise<Choice<Account>[]> {
   const selected = await selectedAccount(model);
-  return (await accounts(selected)).map(a => ({ value: a, current: a.active, label: `${a.ok ? "○" : "✗"} ${a.id.padEnd(22)} ${dim(a.ok ? a.source : "not signed in · enter signs in")}` }));
+  return (await accounts(selected)).filter(a => a.ok).map(a => ({ value: a, current: a.active, label: `${a.id.padEnd(22)} ${dim(a.source)}` }));
 }
 
 export async function setModel(conversation: Conversation, model: string): Promise<Result<Conversation>> {
