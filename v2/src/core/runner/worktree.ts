@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { fail, ok, paths, type Result } from "../../config";
 
 async function git(cwd: string, args: string[]): Promise<{ ok: boolean; out: string }> {
+  if (!existsSync(cwd)) return { ok: false, out: `${cwd} does not exist` };
   const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
   return { ok: (await proc.exited) === 0, out: (out + err).trim() };
