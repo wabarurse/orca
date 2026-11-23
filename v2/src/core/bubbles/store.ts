@@ -50,10 +50,13 @@ export async function peekBubble(conversation: string): Promise<string | null> {
   return (await readConversation(conversation))?.bubble ?? null;
 }
 
+export const NO_BUBBLE = "this chat has no bubble (chosen when it was created), so it keeps no shared memory, notebook or behavior";
+
 export async function ensureBubble(conversation: string): Promise<Result<Bubble>> {
   return withStorageLock(join(paths.runtime, "bubble-locks", conversation), async (): Promise<Result<Bubble>> => {
     const current = await readConversation(conversation);
     if (current === null) return fail(`no conversation ${conversation}`);
+    if (current.noBubble) return fail(NO_BUBBLE);
     const existing = current.bubble === null ? null : await readBubble(current.bubble);
     if (existing !== null) return ok(existing);
     const bubble: Bubble = { id: current.bubble ?? `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: current.name, directory: current.directory, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
@@ -64,12 +67,31 @@ export async function ensureBubble(conversation: string): Promise<Result<Bubble>
   });
 }
 
+export async function createBubble(conversation: string, name: string): Promise<Result<Bubble>> {
+  const trimmed = name.replace(/\s+/g, " ").trim();
+  if (trimmed.length === 0 || trimmed.length > 60) return fail("a bubble name is 1 to 60 characters");
+  const current = await readConversation(conversation);
+  if (current === null) return fail(`no conversation ${conversation}`);
+  const bubble: Bubble = { id: `bubble-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`, name: trimmed, directory: current.directory, createdAt: new Date().toISOString(), plugins: { on: [], off: [] } };
+  await writeBubble(bubble);
+  await saveConversation({ ...current, bubble: bubble.id, noBubble: false });
+  await ensureDataDirs(conversation);
+  return ok(bubble);
+}
+
+export async function leaveBubbles(conversation: string): Promise<Result<null>> {
+  const current = await readConversation(conversation);
+  if (current === null) return fail(`no conversation ${conversation}`);
+  await saveConversation({ ...current, bubble: null, noBubble: true });
+  return ok(null);
+}
+
 export async function joinBubble(conversation: string, id: string): Promise<Result<Bubble>> {
   const bubble = await readBubble(id);
   if (bubble === null) return fail(`no bubble ${id}`);
   const current = await readConversation(conversation);
   if (current === null) return fail(`no conversation ${conversation}`);
-  await saveConversation({ ...current, bubble: id });
+  await saveConversation({ ...current, bubble: id, noBubble: false });
   await ensureDataDirs(conversation);
   return ok(bubble);
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { writeStatus } from "../core/daemon/channel";
@@ -35,8 +35,9 @@ function fakeTerminal() {
     for (let waited = 0; waited < ms && !text().includes(wanted); waited += 20) await Bun.sleep(20);
     return text();
   };
+  const dismiss = async (): Promise<void> => { if ((await shows("bubble for this chat", 300)).includes("bubble for this chat")) await press({ name: "escape" }); };
   const act = async (action: screens.ScreenAction): Promise<void> => { for (const cb of acts) cb(action); await Bun.sleep(20); };
-  return { terminal, press, type, text, shows, act, screen: (): screens.Screen | null => state.screen };
+  return { terminal, press, type, text, shows, act, dismiss, screen: (): screens.Screen | null => state.screen };
 }
 
 async function app(dir: string) {
@@ -44,6 +45,7 @@ async function app(dir: string) {
   const started: string[] = [];
   const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
   await a.start();
+  await t.dismiss();
   return { ...t, app: a, started };
 }
 
@@ -76,6 +78,7 @@ describe("tui", () => {
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
+    await t.dismiss();
     expect(t.text()).not.toContain("Trust ");
     await t.type("/pin buy milk");
     await t.press({ name: "enter" });
@@ -154,9 +157,9 @@ describe("tui", () => {
     await a.start();
     const tabs = (): { label: string; active: boolean }[] => { const s = t.screen(); return s?.kind === "chat" && s.header !== null ? s.header.tabs.map(x => ({ label: x.label, active: x.active })) : []; };
     const first = a.conversationId();
-    await t.press({ name: "n", ctrl: true }, { name: "enter" });
+    await t.press({ name: "n", ctrl: true }, { name: "enter" }, { name: "enter" });
     const second = a.conversationId();
-    await t.press({ name: "n", ctrl: true }, { name: "enter" });
+    await t.press({ name: "n", ctrl: true }, { name: "enter" }, { name: "enter" });
     expect(tabs().map(x => x.label)).toEqual([first, second, a.conversationId()]);
     expect(tabs().findIndex(x => x.active)).toBe(2);
     await t.press({ name: "left", alt: true });
@@ -280,6 +283,39 @@ describe("tui", () => {
     await t.act({ kind: "link", url: "file:///etc/passwd" });
     expect(opened.length).toBe(1);
     expect(await t.shows("not opened")).toContain("not opened: file:///etc/passwd");
+    a.stop();
+  });
+
+  test("a new chat offers New bubble (created at once, named after the folder, shown in the top bar), this folder's bubbles, and No bubble (which memory cannot undo)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-newbubble-"));
+    const t = fakeTerminal();
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }),
+      copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
+    await a.start();
+    expect(await t.shows("bubble for this chat")).toContain("No bubble (no shared memory)");
+    await t.press({ name: "enter" });
+    expect(t.text()).toContain(`name the new bubble: ${basename(dir)}`);
+    await t.press({ name: "enter" });
+    await Bun.sleep(50);
+    const first = await readConversation(a.conversationId());
+    const made = first?.bubble == null ? null : await readBubble(first.bubble);
+    expect(made?.name).toBe(basename(dir));
+    expect(made?.directory).toBe(dir);
+    await a.refresh();
+    const header = (): string => { const screen = t.screen(); return screen?.kind === "chat" && screen.header !== null ? screen.header.bubble ?? "" : ""; };
+    expect(header()).toBe(`bubble ${basename(dir)}`);
+
+    await t.press({ name: "n", ctrl: true });
+    expect(await t.shows("bubble for the new chat")).toContain(basename(dir));
+    await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
+    await Bun.sleep(50);
+    const none = await readConversation(a.conversationId());
+    expect(none?.noBubble).toBe(true);
+    expect(none?.bubble).toBeNull();
+    await a.refresh();
+    expect(header()).toBe("no bubble");
+    const ensured = await ensureBubble(a.conversationId());
+    expect(ensured.ok ? "" : ensured.error).toContain("this chat has no bubble");
     a.stop();
   });
 });
