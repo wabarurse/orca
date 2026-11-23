@@ -230,6 +230,22 @@ describe("tui", () => {
     a.stop();
   });
 
+  test("opening orca2 in a folder shows every chat of that folder as a tab, oldest first, on the newest", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-all-"));
+    const older = await createConversation(dir, "older");
+    await Bun.sleep(5);
+    const newer = await createConversation(dir, "newer");
+    await createConversation(home.path(), "elsewhere");
+    const t = await app(dir);
+    const s = t.screen();
+    const tabs = s?.kind === "chat" && s.header !== null ? s.header.tabs : [];
+    expect(tabs.map(x => x.label)).toEqual(["older", "newer"]);
+    expect(t.app.conversationId()).toBe(newer.id);
+    await t.press({ name: "h", ctrl: true });
+    expect(t.app.conversationId()).toBe(older.id);
+    t.app.stop();
+  });
+
   test("/rename renames the open chat everywhere it shows, and its bubble while that still has the old name", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-rename-"));
     const t = fakeTerminal();

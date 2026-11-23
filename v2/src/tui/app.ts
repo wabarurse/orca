@@ -117,7 +117,9 @@ export class App {
   private failed(error: unknown): void { this.flash(errorMessage(error), true); }
 
   async start(): Promise<void> {
-    const existing = (await listConversations()).find(c => c.directory === this.deps.directory);
+    const here = (await listConversations()).filter(c => c.directory === this.deps.directory);
+    const existing = here.at(0);
+    this.openTabs = [...here].reverse().map(c => ({ id: c.id, name: c.name, busy: false }));
     await this.switchTo(existing ?? await createConversation(this.deps.directory, null));
     const fresh = existing === undefined;
     this.deps.terminal.onKey(key => { this.key(key).catch((error: unknown) => { this.failed(error); }); });
