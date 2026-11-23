@@ -19,9 +19,10 @@ const home = tempHome("tui");
 
 function fakeTerminal() {
   const keys: ((key: Key) => void)[] = [];
+  const acts: ((action: screens.ScreenAction) => void)[] = [];
   const state: { screen: screens.Screen | null } = { screen: null };
   const terminal: Terminal = { cols: 100, rows: 30, write() {}, onKey: cb => { keys.push(cb); }, onResize() {}, open() {}, close() {}, eraseOnExit() {},
-    show: screen => { state.screen = screen; }, scroll() {}, onAction() {}, selection: () => "" };
+    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "" };
   const press = async (...list: Key[]): Promise<void> => { for (const key of list) { for (const cb of keys) cb(key); await Bun.sleep(20); } };
   const type = async (text: string): Promise<void> => { await press(...[...text].map(ch => ({ name: "char", text: ch }))); };
   const text = (): string => {
@@ -34,13 +35,14 @@ function fakeTerminal() {
     for (let waited = 0; waited < ms && !text().includes(wanted); waited += 20) await Bun.sleep(20);
     return text();
   };
-  return { terminal, press, type, text, shows, screen: (): screens.Screen | null => state.screen };
+  const act = async (action: screens.ScreenAction): Promise<void> => { for (const cb of acts) cb(action); await Bun.sleep(20); };
+  return { terminal, press, type, text, shows, act, screen: (): screens.Screen | null => state.screen };
 }
 
 async function app(dir: string) {
   const t = fakeTerminal();
   const started: string[] = [];
-  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
   await a.start();
   return { ...t, app: a, started };
 }
@@ -72,7 +74,7 @@ describe("tui", () => {
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
     expect(t.text()).not.toContain("Trust ");
     await t.type("/pin buy milk");
@@ -125,7 +127,7 @@ describe("tui", () => {
     expect(bubble.ok).toBe(true);
     if (!bubble.ok) return;
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
     const first = t.screen();
     expect(first?.kind === "chat" ? first.welcome.join("\n") : "").toContain("#####");
@@ -148,7 +150,7 @@ describe("tui", () => {
   test("Ctrl+N opens a new chat as another header tab; Alt+← switches back; /close closes the open one", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-tabs-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
     const tabs = (): { label: string; active: boolean }[] => { const s = t.screen(); return s?.kind === "chat" && s.header !== null ? s.header.tabs.map(x => ({ label: x.label, active: x.active })) : []; };
     const first = a.conversationId();
@@ -169,7 +171,7 @@ describe("tui", () => {
   test("/rename renames the open chat everywhere it shows, and its bubble while that still has the old name", async () => {
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-rename-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
     await Bun.sleep(50);
     await t.press({ name: "escape" });
@@ -196,7 +198,7 @@ describe("tui", () => {
     const foreign = await ensureBubble((await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-foreign-")), "foreign")).id);
     expect((await setBubbleDirectory(shared.data.id, dir)).ok).toBe(true);
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), exit: () => {} });
     await a.start();
     await Bun.sleep(50);
     expect(t.text()).toContain("bubble for this chat");
@@ -259,5 +261,25 @@ describe("tui", () => {
     expect(await t.shows("Archived (2)")).toContain("▾ Archived (2)");
     await saveConfig({ plugins: [] });
     t.app.stop();
+  });
+
+  test("a finished selection is copied to the clipboard and a clicked link opens in the browser; only web and mail links open", async () => {
+    const copied: string[] = [], opened: string[] = [];
+    const t = fakeTerminal();
+    const a = new App({ terminal: t.terminal, directory: mkdtempSync(join(tmpdir(), "orca2-tui-copy-")), now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }),
+      clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async text => { copied.push(text); return { ok: true, data: null }; },
+      openUrl: async url => { opened.push(url); return { ok: true, data: null }; }, exit: () => {} });
+    await a.start();
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    await t.act({ kind: "copy", text: "hello there" });
+    expect(copied).toEqual(["hello there"]);
+    expect(await t.shows("copied 11 characters")).toContain("copied 11 characters");
+    await t.act({ kind: "link", url: "https://github.com/wabarurse/orca/pull/1" });
+    expect(opened).toEqual(["https://github.com/wabarurse/orca/pull/1"]);
+    await t.act({ kind: "link", url: "file:///etc/passwd" });
+    expect(opened.length).toBe(1);
+    expect(await t.shows("not opened")).toContain("not opened: file:///etc/passwd");
+    a.stop();
   });
 });
