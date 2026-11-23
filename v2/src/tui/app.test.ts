@@ -93,6 +93,37 @@ describe("tui", () => {
     a.stop();
   });
 
+  test("/effort and /fast open v1's menus: the current choice marked and selected, Enter saves it for the chat and the header shows it", async () => {
+    await saveConfig({ model: "claude-opus-5-5" });
+    const t = await app(home.path());
+    await t.type("/effort");
+    await t.press({ name: "enter" });
+    const menu = await t.shows("effort for claude-opus-5-5");
+    expect(menu).toContain("↑↓ enter   esc cancels");
+    expect(menu).toMatch(/❯ ● default/);
+    await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
+    await t.shows("effort for claude-opus-5-5: medium");
+    const account = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+    expect(account()).toContain("claude-opus-5-5 · medium");
+    const id = t.app["conversation"].id;
+    expect((await readConversation(id))?.effort).toBe("medium");
+    await t.type("/effort");
+    await t.press({ name: "enter" });
+    expect(await t.shows("❯ ● medium")).toContain("❯ ● medium");
+    await t.press({ name: "escape" });
+    await t.type("/fast");
+    await t.press({ name: "enter" });
+    expect(await t.shows("❯ ● off")).toContain("fast mode for claude-opus-5-5");
+    await t.press({ name: "down" }, { name: "enter" });
+    await t.shows("fast for claude-opus-5-5: on");
+    expect(account()).toContain("claude-opus-5-5 · medium · fast");
+    expect((await readConversation(id))?.fast).toBe(true);
+    await t.type("/effort turbo");
+    await t.press({ name: "enter" });
+    expect(await t.shows("unsupported")).toContain("effort turbo is unsupported for claude-opus-5-5");
+    await saveConfig({ model: "claude-sonnet-5-5" });
+  });
+
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
     registerBuiltins(BUILTINS);
     await saveConfig({ plugins: ["tmux"], runner: "plain" });
