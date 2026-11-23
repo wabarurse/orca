@@ -87,6 +87,7 @@ export class ChatView {
   private readonly fin: TextRenderable;
   private readonly body: ScrollBoxRenderable;
   private readonly tail: TextRenderable;
+  private updates = 0;
   private readonly welcome: BoxRenderable;
   private readonly welcomeArt: TextRenderable;
   private readonly footer: TextRenderable;
@@ -125,7 +126,7 @@ export class ChatView {
 
   show(screen: screens.ChatScreen, cols: number): void {
     this.showHeader(screen.header, cols);
-    this.showItems(screen.items, screen.tail);
+    this.showItems(screen.items, screen.tail, screen.updates);
     const empty = screen.items.length === 0 && screen.tail.length === 0 && screen.welcome.length > 0;
     this.welcome.visible = empty;
     this.body.visible = !empty;
@@ -177,7 +178,7 @@ export class ChatView {
     }
   }
 
-  private showItems(items: screens.ScreenItem[], tail: string[]): void {
+  private showItems(items: screens.ScreenItem[], tail: string[], updates: number): void {
     const next: { key: string; item: Built }[] = [];
     const previous = new Map(this.built.map(entry => [entry.key, entry.item]));
     for (const item of items) {
@@ -191,9 +192,12 @@ export class ChatView {
       for (const child of this.body.getChildren()) if (child !== this.tail) this.body.remove(child);
       for (const entry of next) this.body.insertBefore(entry.item.node, this.tail);
     }
+    const changed = !same || updates !== this.updates;
     this.built = next;
+    this.updates = updates;
     this.tail.content = styledRows(tail);
     this.tail.visible = tail.length > 0;
+    if (changed) this.body.scrollTo(Number.MAX_SAFE_INTEGER);
   }
 
   private build(item: screens.ScreenItem): BoxRenderable {

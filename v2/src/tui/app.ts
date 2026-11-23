@@ -717,7 +717,7 @@ export class App {
       account: this.account.length > 0 ? `${this.account} · ${this.model}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
-      welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
+      updates: this.events.length, welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }
 
   private modalLine(modal: Modal): string {
