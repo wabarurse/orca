@@ -124,6 +124,29 @@ describe("tui", () => {
     await saveConfig({ model: "claude-sonnet-5-5" });
   });
 
+  test("/login offers the providers and waits for the browser sign-in, Esc cancels it; /accounts signs in an account that is not signed in yet", async () => {
+    const t = await app(home.path());
+    await t.type("/login");
+    await t.press({ name: "enter" });
+    expect(await t.shows("sign in   (/login")).toMatch(/❯ anthropic/);
+    await t.press({ name: "enter" });
+    const waiting = await t.shows("waiting for login");
+    expect(waiting).toContain("http://localhost:53692/login/");
+    expect(waiting).toContain("esc cancels");
+    await t.press({ name: "escape" });
+    expect(await t.shows("login cancelled")).not.toContain("waiting for login");
+    await t.type("/login gemini");
+    await t.press({ name: "enter" });
+    await t.shows("/usage: login anthropic|openai");
+    await t.type("/accounts");
+    await t.press({ name: "enter" });
+    await t.shows("accounts: enter uses one");
+    await t.press({ name: "enter" });
+    await t.shows("waiting for login");
+    await t.press({ name: "escape" });
+    await t.shows("login cancelled");
+  });
+
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
     registerBuiltins(BUILTINS);
     await saveConfig({ plugins: ["tmux"], runner: "plain" });

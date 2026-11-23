@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
+import { accounts, parseLogin, signIn, type LoginRequest, type ProviderName } from "../api/auth";
 import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
@@ -52,6 +53,7 @@ export type AppDeps = {
 const POLL_MS = 250;
 const FRAME_MS = 40;
 const NOTE_ROWS = 4;
+const SIGN_IN_ROWS = 8;
 const errorText = (line: string): string => noColour() ? line : `\x1b[${pastel.red}m${line}\x1b[0m`;
 const SLOW_MS = 2000;
 const PICK_ROWS = 8;
@@ -74,6 +76,7 @@ export class App {
   private confirms: Confirm[] = [];
   private note = "";
   private noteError = false;
+  private signing: { controller: AbortController; text: string } | null = null;
   private shownError: string | null = null;
   private open = new Set<string>();
   private modal: Modal | null = null;
@@ -291,7 +294,7 @@ export class App {
     switch (key.name) {
       case "enter": if (key.shift === true || key.alt === true) this.composer = editor.newline(this.composer); else await this.submit("steer"); break;
       case "tab": await this.submit(this.busy ? "follow" : "steer"); break;
-      case "escape": await this.takeBack(); break;
+      case "escape": if (this.signing !== null) this.signing.controller.abort(); else await this.takeBack(); break;
       case "pageup": case "wheelup": this.deps.terminal.scroll(key.name === "pageup" ? "page-up" : "up"); break;
       case "pagedown": case "wheeldown": this.deps.terminal.scroll(key.name === "pagedown" ? "page-down" : "down"); break;
       default: this.composer = edit(this.composer, key);
@@ -444,13 +447,14 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
     if (name === "model" || name === "effort" || name === "fast" || name === "accounts") { await this.setting(name, args.trim()); return; }
+    if (name === "login") { await this.loginCommand(args.trim()); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
     if (name === "mux") { await this.mux(args.trim()); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
@@ -494,17 +498,57 @@ export class App {
     } else {
       const account = await this.choose("accounts: enter uses one for this chat", await accountChoices(model));
       if (account === null) return;
-      if (!account.ok) { this.flash(`${account.id} is not signed in: run orca2 login ${account.provider}${account.profile === "default" ? "" : ` ${account.profile}`}`, true); return; }
+      if (!account.ok) { await this.login({ provider: account.provider, profile: account.profile, imported: false }); return; }
       const used = await useAccount(conversation, account);
       saved = used.ok ? ok(used.data.conversation) : used;
       note = used.ok ? used.data.note : "";
     }
+    this.saved(saved, model, note);
+  }
+
+  private saved(saved: Result<Conversation>, model: string, note: string): void {
     if (!saved.ok) { this.flash(saved.error, true); return; }
-    this.current = { conversation: saved.data, transcript: this.transcript };
-    this.model = saved.data.model ?? model;
-    this.settings = settingsLabel(saved.data);
-    this.lastSlow = 0;
+    if (saved.data.id === this.conversation.id) {
+      this.current = { conversation: saved.data, transcript: this.transcript };
+      this.model = saved.data.model ?? model;
+      this.settings = settingsLabel(saved.data);
+      this.lastSlow = 0;
+    }
     this.flash(note);
+  }
+
+  private async loginCommand(arg: string): Promise<void> {
+    if (arg.length > 0) {
+      const request = parseLogin(arg.split(/\s+/));
+      if (request.ok) await this.login(request.data); else this.flash(`/${request.error}`, true);
+      return;
+    }
+    const provider = await this.choose<ProviderName>("sign in   (/login <provider> [profile] [--import] sets directly)", [
+      { value: "anthropic", label: `anthropic  ${dim("claude subscription")}`, current: false },
+      { value: "openai", label: `openai     ${dim("chatgpt / codex subscription")}`, current: false },
+    ]);
+    if (provider !== null) await this.login({ provider, profile: "default", imported: false });
+  }
+
+  private async login(request: LoginRequest): Promise<void> {
+    if (this.signing !== null) { this.flash("a sign-in is already waiting; esc cancels it", true); return; }
+    const id = `${request.provider}:${request.profile}`;
+    const signing = { controller: new AbortController(), text: `signing in to ${id}…   esc cancels` };
+    this.signing = signing;
+    this.draw();
+    const signed = await signIn(request, {
+      write: text => { signing.text = `${text.trim()}   esc cancels`; this.draw(); },
+      openBrowser: async url => { await this.deps.openUrl(url); },
+      signal: signing.controller.signal,
+    }).catch((error: unknown) => fail(errorMessage(error)));
+    this.signing = null;
+    if (!signed.ok) { this.flash(signed.error, true); return; }
+    const account = (await accounts()).find(a => a.provider === request.provider && a.profile === request.profile);
+    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
+    const model = conversation.model ?? (await loadConfig()).model;
+    if (account === undefined || !account.ok) { this.flash(`signed in to ${id}, but it does not show as signed in yet`, true); return; }
+    const used = await useAccount(conversation, account);
+    this.saved(used.ok ? ok(used.data.conversation) : used, model, used.ok ? `signed in to ${id}; ${used.data.note}` : "");
   }
 
   private commands(): { name: string }[] {
@@ -742,6 +786,7 @@ export class App {
     }
     const cols = t.cols;
     const footer: string[] = [];
+    if (this.signing !== null) for (const line of this.signing.text.split("\n").flatMap(row => wordWrap(row, cols)).slice(0, SIGN_IN_ROWS)) footer.push(dim(line));
     if (this.note.length > 0) for (const line of wordWrap(this.note, cols).slice(0, NOTE_ROWS)) footer.push(this.noteError ? errorText(line) : dim(line));
     const waiting = this.busy ? this.queued : [];
     for (const m of waiting.slice(-4)) footer.push(dim(fit(`queued (${m.delivery === "follow" ? "after the work" : "next"}): ${m.text.replace(/\s+/g, " ")}`, cols)));
