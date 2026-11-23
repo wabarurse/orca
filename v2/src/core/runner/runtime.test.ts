@@ -7,7 +7,8 @@ import { createConversation } from "../conversations";
 import { registerBuiltins } from "../plugins/loader";
 import { defineBackground, definePlugin, noHooks, type Runner } from "../plugins/types";
 import { launchCommand } from "./launch";
-import { chooseRunner, runnerNames, selectedRunner } from "./runtime";
+import { chooseRunner, runnerNames, runtimeFor, selectedRunner } from "./runtime";
+import { readRun, updateRun } from "./runs";
 
 const home = tempHome("runtime");
 
@@ -51,4 +52,26 @@ test("the launch command keeps the environment out of argv in a private file tha
   expect(shown).toBe("secret=hunter2 'quoted' tmux=unset\n");
   expect(readFileSync(log, "utf8")).toBe(shown);
   expect(existsSync(file)).toBe(false);
+});
+
+test("the orchestrator can start an agent in a named runner without /mux, is refused one that is off, and show opens its window", async () => {
+  const opened: string[] = [];
+  const box: Runner = { name: "box", start: async () => ({ handle: "box", pid: null }), alive: async () => [], stop: async () => undefined,
+    attach: async (_c, label) => { opened.push(label); return { ok: true, data: { kind: "shown", note: `${label} is open beside orca2` } }; } };
+  registerBuiltins([{ name: "box", dir: join(home.path(), "box"), ui: null,
+    index: async () => ({ default: definePlugin({ name: "box", description: "box", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], guard: [], retention: [],
+      provides: [], uses: [], emits: [], on: [], ui: null, background: "./background.ts" }) }),
+    background: async () => ({ default: defineBackground({ watchers: [], memory: null, runner: box, stop: null, remove: null }) }) }]);
+  await saveConfig({ plugins: ["box"], runner: "plain" });
+  const c = await createConversation(home.path(), "split");
+  const runtime = runtimeFor(c.id, "orchestrator", async () => false);
+  await expect(runtime.spawn({ bundle: "worker", branch: "x", brief: "look around", fresh: false, images: [], runner: "rex" })).rejects.toThrow("unknown runner rex; this bubble has plain, box");
+  const info = await runtime.spawn({ bundle: "worker", branch: "x", brief: "look around", fresh: false, images: [], runner: "box" });
+  expect(info.runner).toBe("box");
+  expect((await loadConfig()).runner).toBe("plain");
+  await updateRun(c.id, info.agent, { state: "running", pid: process.pid });
+  expect((await readRun(c.id, info.agent))?.runner).toBe("box");
+  expect(await runtime.show(info.agent)).toBe(`${info.agent} is open beside orca2`);
+  expect(opened).toEqual([info.agent]);
+  await saveConfig({ plugins: [] });
 });

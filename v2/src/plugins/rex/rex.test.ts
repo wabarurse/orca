@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { paths } from "../../config";
 import type { Launch } from "../../core/plugins";
 import { present } from "../../core/plugins/testing";
@@ -18,7 +19,8 @@ case "$1" in
   ls) if [ -f "$REX_FAKE/down" ]; then echo "Error: no Rex server is running at /x, and autostart is disabled" >&2; exit 4; fi
       cat "$REX_FAKE/ls.json" 2>/dev/null || echo '{"sessions":[]}' ;;
   new) printf '{"sessions":[{"session_id":"${SID}","label":"%s"}]}' "$2" > "$REX_FAKE/ls.json"; echo '{"session_id":"${SID}"}' ;;
-  window) if [ "$2" = ls ]; then f=$(file windows "$4"); if [ -f "$f" ]; then cat "$f"; else echo 'Error: session target not found' >&2; exit 3; fi; fi ;;
+  window) if [ "$2" = ls ]; then f=$(file windows "$4"); if [ -f "$f" ]; then cat "$f"; else echo 'Error: session target not found' >&2; exit 3; fi; fi
+          if [ "$2" = new ]; then echo '{"window_id":"window:holder","block_ids":["block:holder"]}'; fi ;;
   block) if [ "$2" = call ]; then f=$(file process "$4"); if [ -f "$f" ]; then cat "$f"; else echo "Error: block target not found" >&2; exit 3; fi; fi ;;
   run) cat "$REX_FAKE/run.json" ;;
 esac
@@ -95,4 +97,36 @@ test("alive is the agent-labelled blocks still running; the idle shell and block
 test("the plugin declares its global marker and has no UI of its own", () => {
   expect(plugin.ui).toBeNull();
   expect(plugin.storage.map(s => s.scope)).toEqual(["global"]);
+});
+
+test("when orca2 itself runs in Rex, agents open as tabs of its session; attach moves one beside orca2 and back; stop closes only that pane", async () => {
+  const mine = "session:mine";
+  mkdirSync(paths.conversation("c1"), { recursive: true });
+  writeFileSync(join(paths.conversation("c1"), "viewer.json"), JSON.stringify({ pid: process.pid, rexSession: mine, rexBlock: "block:orca" }));
+  writeFileSync(join(fake, "run.json"), JSON.stringify({ window_id: "window:w", block_ids: ["block:w"] }));
+  await runner.start(launch);
+  const run = present(log().find(line => line.includes(" run ")), "rex run call");
+  expect(run.startsWith(`--autostart=false run -s ${mine} --label worker-a@c1 `)).toBe(true);
+  expect(log().some(line => line.includes(" new orca2-c1"))).toBe(false);
+  expect(log()).toContain(`--autostart=false window rename -s ${mine} window:w worker-a@c1`);
+
+  const apart = { windows: [window("window:orca", "orca2", [["block:orca", "orca2"]]), window("window:w", "worker-a@c1", [["block:w", "worker-a@c1"]]),
+    window("window:other", "worker-a@c2", [["block:o", "worker-a@c2"]])] };
+  json("windows", mine, apart);
+  for (const b of ["block:orca", "block:w", "block:o"]) json("process", b, running);
+  expect(await runner.alive("c1")).toEqual(["worker-a"]);
+  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is open beside orca2 (attach again to put it back in its tab; closing that pane stops it)" } });
+  expect(log().at(-1)).toBe(`--autostart=false move -s ${mine} block:w right block:orca --ratio 45`);
+
+  json("windows", mine, { windows: [window("window:orca", "orca2", [["block:orca", "orca2"], ["block:w", "worker-a@c1"]])] });
+  json("process", "block:holder", running);
+  expect(await runner.alive("c1")).toEqual(["worker-a"]);
+  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is back in its own Rex tab" } });
+  expect(log().slice(-3)).toEqual([`--autostart=false window new -s ${mine} worker-a@c1 --keep-open --focus=false --json -- /bin/sh -c sleep 600`,
+    `--autostart=false move -s ${mine} block:w right block:holder`, "--autostart=false block close block:holder"]);
+
+  await runner.stop("c1", "worker-a");
+  expect(log()).toContain("--autostart=false block close block:w");
+  expect(log().some(line => line.includes("window close") && line.includes("window:orca"))).toBe(false);
+  rmSync(join(paths.conversation("c1"), "viewer.json"));
 });

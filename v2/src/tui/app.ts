@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
+import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
@@ -133,6 +134,7 @@ export class App {
   }
 
   private async switchTo(conversation: Conversation): Promise<void> {
+    await saveViewer(conversation.id, viewerHere(process.env, process.pid)).catch(() => undefined);
     this.lastSlow = Number.NEGATIVE_INFINITY;
     this.noBubble = conversation.noBubble;
     this.bubbleName = null;

@@ -100,7 +100,7 @@ describe("plugins", () => {
     expect(worker.guard.map(rule => rule.id)).toEqual(["no-make"]);
     const ctx: ToolContext = { conversation: c.id, agent: "worker-g", role: "worker", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [], guard: worker.guard,
       callId: "call", signal: new AbortController().signal, model: "fake-model", provider: fakeProvider([]), settings: null,
-      runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", confirm: async () => false }, links: noLinks };
+      runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", show: async () => "", confirm: async () => false }, links: noLinks };
     await expect(bash.run({ command: "make all" }, ctx)).rejects.toMatchObject({ rule: "no-make", message: "refused (no-make): this repo builds with bun. Use: bun run build" });
     await expect(bash.run({ command: "sudo ls" }, ctx)).rejects.toMatchObject({ rule: "sudo" });
     expect(await bash.run({ command: "echo built" }, ctx)).toBe("built");

@@ -13,7 +13,7 @@ const home = tempHome("read");
 
 const ctx = (): ToolContext => ({ conversation: "c-00000000", agent: "worker", role: "worker", branch: null, cwd: home.path(), data: home.path(), trusted: false, pluginSkills: [], guard: [],
   callId: "call", signal: new AbortController().signal, model: "fake-model", provider: fakeProvider([]), settings: null,
-  runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", confirm: async () => false }, links: noLinks });
+  runtime: { spawn: async () => { throw new Error("no spawn"); }, agents: async () => [], stop: async () => "", show: async () => "", confirm: async () => false }, links: noLinks });
 
 const SECRET = { rule: "secret-file", message: "refused (secret-file): keys, .env files and credentials must not enter the transcript. Use: printenv NAME for one variable, or ask the user for what you need" };
 

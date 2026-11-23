@@ -23,6 +23,7 @@ const idleRuntime: Runtime = {
   spawn: async () => { throw new Error("no spawn in plugin tests"); },
   agents: async () => [],
   stop: async () => "",
+  show: async () => "",
   confirm: async () => false,
 };
 

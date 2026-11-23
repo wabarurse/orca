@@ -6,3 +6,4 @@ export { assemble, BUILTIN_BUNDLES, type Assembled } from "./assemble";
 export { writeAtomic } from "../conversations";
 export { withStorageLock } from "../lock";
 export { exec, launchCommand, which, type Answer, type LaunchCommand } from "../runner/launch";
+export { readViewer, type Viewer } from "../viewer";

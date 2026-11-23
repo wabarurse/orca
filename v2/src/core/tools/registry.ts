@@ -20,12 +20,13 @@ export type AgentInfo = {
   lastTool: string | null;
 };
 
-export type SpawnRequest = { bundle: string; branch: string; brief: string; fresh: boolean; images: string[] };
+export type SpawnRequest = { bundle: string; branch: string; brief: string; fresh: boolean; images: string[]; runner: string | null };
 
 export type Runtime = {
   spawn: (request: SpawnRequest) => Promise<AgentInfo>;
   agents: () => Promise<AgentInfo[]>;
   stop: (agent: string) => Promise<string>;
+  show: (agent: string) => Promise<string>;
   confirm: (question: string) => Promise<boolean>;
 };
 
