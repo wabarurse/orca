@@ -263,7 +263,7 @@ export class App {
     }
     if (key.alt === true && (key.name === "left" || key.name === "right")) { await this.cycle(key.name === "left" ? -1 : 1); return; }
     switch (key.name) {
-      case "enter": await this.submit("steer"); break;
+      case "enter": if (key.shift === true || key.alt === true) this.composer = editor.newline(this.composer); else await this.submit("steer"); break;
       case "tab": await this.submit(this.busy ? "follow" : "steer"); break;
       case "escape": await this.takeBack(); break;
       case "pageup": case "wheelup": this.deps.terminal.scroll(key.name === "pageup" ? "page-up" : "up"); break;
@@ -415,7 +415,7 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }

@@ -215,4 +215,20 @@ describe("tui", () => {
     expect(a.conversationId()).toBe(first);
     a.stop();
   });
+
+  test("Shift+Enter (or Alt+Enter) adds a new line in the composer instead of sending", async () => {
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-newline-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    const id = t.app.conversationId();
+    await t.type("first");
+    await t.press({ name: "enter", shift: true });
+    await t.type("second");
+    await t.press({ name: "enter", alt: true });
+    await t.type("third");
+    expect(await pending(id, "orchestrator")).toEqual([]);
+    await t.press({ name: "enter" });
+    expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
+    t.app.stop();
+  });
 });
