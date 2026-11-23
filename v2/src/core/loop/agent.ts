@@ -81,6 +81,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
   const notice = (text: string): void => { setup.emit({ kind: "notice", text }); };
 
   async function readInbox(results: ToolResultBlockParam[], all: boolean): Promise<boolean> {
+    if (results.length === 0) await closeInterrupted(setup.transcript);
     const taken = await consume(setup.conversation, setup.agent, seen, message => all || message.delivery === "steer", async messages => {
       const kept: Message[] = [];
       for (const message of messages) {
