@@ -42,6 +42,7 @@ export function askYes(question: string, input: NodeJS.ReadableStream, output: N
 }
 
 function kind(disposition: string): string | null {
+  if (/^(removed|would remove): archived /.test(disposition)) return "archived items";
   if (/conversation "/.test(disposition)) return "deleted conversations";
   if (/worktree/.test(disposition)) return "archived worktrees";
   if (/tool output/.test(disposition)) return "old tool outputs";

@@ -7,6 +7,7 @@ import { listConversations, validId } from "./conversations";
 import { daemonPid } from "./daemon/channel";
 import { installedApp, PACKAGE, pruneBuildScratch, run, type Change } from "./install";
 import { listRuns, live } from "./runner/runs";
+import { archiveDue, purgeExpired } from "./retention";
 
 export type CleanProgress = { step: (label: string, done: number, total: number) => void; end: () => void };
 export const quietProgress: CleanProgress = { step: () => {}, end: () => {} };
@@ -41,6 +42,13 @@ async function collect(apply: boolean, step: (phase: string, done: number, total
   for (const [index, conversation] of conversations.entries()) {
     step("tool outputs", index, conversations.length);
     changes.push(...await oldOutputs(conversation.id, apply));
+  }
+
+  for (const [index, conversation] of conversations.entries()) {
+    step("archived items", index, conversations.length);
+    const now = Date.now();
+    changes.push(...await archiveDue(conversation.id, now, apply));
+    changes.push(...await purgeExpired(conversation.id, now, apply));
   }
 
   step("bubbles", 0, 1);

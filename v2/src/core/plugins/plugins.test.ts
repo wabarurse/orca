@@ -15,7 +15,7 @@ import { definePlugin, noHooks, type Plugin } from "./types";
 
 const home = tempHome("plugins");
 
-const shell = (name: string, extra: Partial<Plugin>): Plugin => definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], ui: null, background: null, ...extra });
+const shell = (name: string, extra: Partial<Plugin>): Plugin => definePlugin({ name, description: name, tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], retention: [], ui: null, background: null, ...extra });
 const assembled = async (input: Parameters<typeof assemble>[0]) => {
   const result = await assemble(input);
   if (!result.ok) throw new Error(result.error);

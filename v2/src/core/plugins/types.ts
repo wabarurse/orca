@@ -34,6 +34,16 @@ export type PluginTool = { tool: Tool; roles: Role[]; replaces: boolean };
 
 export type Bundle = { name: string; role: Role; prompt: string; plugins: string[] };
 
+export type SettledItem = { id: string; at: string };
+export type Retention = {
+  tab: string;
+  archiveAfterDays: number | null;
+  purgeAfterDays: number;
+  settled: (ctx: BackgroundContext) => Promise<SettledItem[]>;
+  locate: (id: string, ctx: BackgroundContext) => Promise<string | null>;
+  purge: (ids: string[], ctx: BackgroundContext) => Promise<void>;
+};
+
 export type Plugin = {
   name: string;
   description: string;
@@ -44,6 +54,7 @@ export type Plugin = {
   hooks: PluginHooks;
   guard: GuardRule[];
   bundles: Bundle[];
+  retention: Retention[];
   ui: string | null;
   background: string | null;
 };

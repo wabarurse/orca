@@ -1,4 +1,5 @@
 import { watch, type FSWatcher } from "node:fs";
+import { archiveDue } from "../retention";
 import { mkdir } from "node:fs/promises";
 import { BUILD_ID, errorMessage, paths } from "../../config";
 import { pluginData } from "../bubbles";
@@ -21,6 +22,7 @@ import { flushSpans, phaseTracker, spanRecorder } from "../spans";
 
 export const POLL_MS = 1000;
 const WATCH_MS = 2000;
+const ARCHIVE_MS = 3_600_000;
 
 export type DaemonOptions = { conversation: string; run: string; exitWhenIdle: boolean; model: string | null; log: (text: string) => void };
 
@@ -89,10 +91,15 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
       }
     }
   };
-  let lastWatch = 0;
+  let lastWatch = 0, lastArchive = 0, archiving = false;
   const maintenance = async (): Promise<void> => {
     if (Date.now() - lastWatch < WATCH_MS) return;
     lastWatch = Date.now();
+    if (!archiving && Date.now() - lastArchive >= ARCHIVE_MS) {
+      archiving = true;
+      lastArchive = Date.now();
+      void archiveDue(conversation, Date.now(), true).catch((error: unknown) => { options.log(`archive: ${String(error)}\n`); }).finally(() => { archiving = false; });
+    }
     await exitWatchdog(conversation).catch((error: unknown) => { options.log(`watchdog: ${String(error)}\n`); });
     await drainUser(conversation, transcript, userSeen).catch(() => {});
     for (const item of watchers) {

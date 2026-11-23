@@ -30,7 +30,11 @@ function fakeTerminal() {
     const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
     return s.kind === "page" ? plain(s.rows) : plain([...s.items.flatMap(i => i.kind === "fold" ? [i.title, ...i.rows] : i.rows), ...s.tail, ...s.footer]);
   };
-  return { terminal, press, type, text, screen: (): screens.Screen | null => state.screen };
+  const shows = async (wanted: string, ms = 1000): Promise<string> => {
+    for (let waited = 0; waited < ms && !text().includes(wanted); waited += 20) await Bun.sleep(20);
+    return text();
+  };
+  return { terminal, press, type, text, shows, screen: (): screens.Screen | null => state.screen };
 }
 
 async function app(dir: string) {
@@ -229,6 +233,31 @@ describe("tui", () => {
     expect(await pending(id, "orchestrator")).toEqual([]);
     await t.press({ name: "enter" });
     expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
+    t.app.stop();
+  });
+
+  test("a plugin tab archives with a (rows move under a closed Archived heading), Enter opens it, u restores, A archives all after y", async () => {
+    registerBuiltins(BUILTINS);
+    await saveConfig({ plugins: ["example"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-archive-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    for (const text of ["/pin first", "/pin second"]) { await t.type(text); await t.press({ name: "enter" }); }
+    await t.press({ name: "a", ctrl: true }, { name: "tab" });
+    expect(await t.shows("[Pins]")).toContain("second");
+    await t.press({ name: "char", text: "a" });
+    expect(await t.shows("Archived (1)")).toContain("▸ Archived (1)");
+    expect(t.text()).toContain("archived first");
+    expect(t.text().split("\n").filter(line => line.includes("first") && !line.includes("archived first") && !line.startsWith("──"))).toEqual([]);
+    await t.press({ name: "down" }, { name: "enter" });
+    expect(await t.shows("▾ Archived (1)")).toContain("▾ Archived (1)");
+    await t.press({ name: "down" }, { name: "char", text: "u" });
+    expect(await t.shows("restored first")).not.toContain("Archived (");
+    await t.press({ name: "char", text: "A" });
+    expect(t.text()).toContain("archive all 2 on this tab?");
+    await t.press({ name: "char", text: "y" });
+    expect(await t.shows("Archived (2)")).toContain("▾ Archived (2)");
+    await saveConfig({ plugins: [] });
     t.app.stop();
   });
 });

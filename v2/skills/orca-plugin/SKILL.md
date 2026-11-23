@@ -56,6 +56,7 @@ const plugin: Plugin = {
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   guard: [],
   bundles: [],
+  retention: [],
   ui: "./ui.ts",          // or null
   background: null,       // or "./background.ts"
 };
@@ -122,6 +123,27 @@ reason, suggest }`; `test(call)` gets `{ tool: "bash", input, command, root }` o
 `refused (<id>): <reason>. Use: <suggest(call)>` as the tool result and nothing runs. Rules see bash commands only; to
 stop another tool's call, use a `beforeTool` hook. Keep tests fast and pure.
 
+### Retention: archiving and cleaning up
+
+Every row on a plugin tab can be archived: the core keeps which ids are archived (per conversation, in
+`archived.json`), shows them under a closed "Archived (n)" heading at the bottom of the tab, and gives the user `a`
+(archive), `A` (archive all, after y) and `u` (restore). The plugin stores nothing for this. `retention` adds the rules:
+
+```ts
+retention: [{
+  tab: "notes",                 // the tab whose row ids these are
+  archiveAfterDays: 7,          // a settled item is archived this long after it settled (null: only by hand)
+  purgeAfterDays: 14,           // orca2 clean deletes an item archived this long
+  settled: async ctx => [{ id: "n1", at: "2026-11-20T10:00:00Z" }],  // finished items and when they finished
+  locate: async (id, ctx) => null,          // a file or folder holding the item, to show its size; or null
+  purge: async (ids, ctx) => { /* delete these items from your storage */ },
+}],
+```
+
+The daemon archives due items once an hour; `orca2 clean` archives what is due too, then calls `purge` for items
+archived longer than `purgeAfterDays` (`clean --preview` lists them first). An item the user restored with `u` is
+never archived again automatically. `purge` deletes only the ids it is given, and an id may already be gone.
+
 ### Bundles
 
 A bundle is an agent preset: `{ name: "scout", role: "worker", prompt: "...", plugins: ["notes"] }`. The
@@ -149,7 +171,7 @@ export default ui;
 
 Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q (avoid
 a, c, d, j, k, n, u, v, w: the core uses them). `tone` is normal, good, warn, bad or dim. Action keys must not be
-j, k, h, l, q, r or digits. The host offers `note`, `confirm`, `input`, `pick` and `say` (send text to the
+j, k, h, l, q, r, a, A, u or digits (`a`/`A`/`u` archive and restore); `key: "enter"` runs on Enter. The host offers `note`, `confirm`, `input`, `pick` and `say` (send text to the
 orchestrator as the user). Counts show in the composer only when above zero; keep them cheap (they run every 2s).
 A fold turns finished calls of a tool into "+ N <title>" with one line per item; `opens` is the tab an item opens.
 
