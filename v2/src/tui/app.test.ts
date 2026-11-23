@@ -172,9 +172,17 @@ describe("tui", () => {
     await a.start();
     const tabs = (): { label: string; active: boolean }[] => { const s = t.screen(); return s?.kind === "chat" && s.header !== null ? s.header.tabs.map(x => ({ label: x.label, active: x.active })) : []; };
     const first = a.conversationId();
-    await t.press({ name: "n", ctrl: true }, { name: "enter" }, { name: "enter" });
+    const newChat = async (): Promise<void> => {
+      await t.press({ name: "n", ctrl: true });
+      await t.shows("bubble for the new chat");
+      await t.press({ name: "enter" });
+      await t.shows("name the new bubble");
+      await t.press({ name: "enter" });
+      await t.shows("new bubble ");
+    };
+    await newChat();
     const second = a.conversationId();
-    await t.press({ name: "n", ctrl: true }, { name: "enter" }, { name: "enter" });
+    await newChat();
     expect(tabs().map(x => x.label)).toEqual([first, second, a.conversationId()]);
     expect(tabs().findIndex(x => x.active)).toBe(2);
     await t.press({ name: "left", alt: true });
