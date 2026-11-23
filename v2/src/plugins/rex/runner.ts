@@ -82,6 +82,27 @@ async function blocksOf(sid: string): Promise<Block[] | null> {
   return blocks;
 }
 
+const ListedSchema = z.looseObject({ blocks: z.array(z.looseObject({ block_id: z.string(), label: z.string(), window_id: z.string().nullish() })) });
+
+async function api(method: string, input: Record<string, unknown>): Promise<Reply> {
+  return rex(["api", "call", method, JSON.stringify(input)]);
+}
+
+async function sharedBlocks(sid: string): Promise<Block[] | null> {
+  const res = await api("session.list_blocks", { session_id: sid });
+  if (!res.ok) return res.gone ? [] : null;
+  const list = parse(res.out, ListedSchema);
+  if (list === null) return null;
+  const blocks: Block[] = [];
+  for (const block of list.blocks) {
+    const p = await rex(["block", "call", "-b", block.block_id, "process"]);
+    if (!p.ok && !p.gone) return null;
+    const child: unknown = p.ok ? parse(p.out, ProcessSchema)?.child ?? null : null;
+    blocks.push({ id: block.block_id, label: block.label, window: block.window_id ?? "", windowLabel: "", live: child !== null && child !== undefined });
+  }
+  return blocks;
+}
+
 const agentBlock = (b: Block): boolean => b.label === b.windowLabel && b.label !== "shell";
 
 async function ensureSession(session: string, cwd: string): Promise<Result<string>> {
@@ -105,12 +126,10 @@ async function startBlock(launch: Launch): Promise<Result<string>> {
   const own = shared === null ? await ensureSession(sessionName(launch.conversation), launch.cwd) : ok(shared);
   if (!own.ok) return own;
   const sid = own;
-  const label = shared === null ? launch.agent : sharedLabel(launch.conversation, launch.agent);
-  if (shared !== null) {
-    mkdirSync(join(paths.globalData, "rex"), { recursive: true, mode: 0o700 });
-    writeFileSync(marker(), "");
-  }
-  for (const block of await blocksOf(sid.data) ?? []) if (block.label === label && !block.live) await rex(["block", "close", block.id]);
+  const label = sharedLabel(launch.conversation, launch.agent);
+  mkdirSync(join(paths.globalData, "rex"), { recursive: true, mode: 0o700 });
+  writeFileSync(marker(), "");
+  for (const block of await sharedBlocks(sid.data) ?? []) if ((block.label === label || block.label === launch.agent) && !block.live) await rex(["block", "close", block.id]);
   const command = await launchCommand(launch);
   const res = await rex(["run", "-s", sid.data, "--label", label, "-c", launch.cwd, "--keep-open", "--focus=false", "--shell=none", "--json", "--", ...command.argv]);
   const made = res.ok ? parse(res.out, RunSchema) : null;
@@ -119,8 +138,7 @@ async function startBlock(launch: Launch): Promise<Result<string>> {
     await command.cleanup();
     return fail(`rex run failed: ${res.ok ? "unexpected output" : res.err}`);
   }
-  const window = made?.window_id;
-  if (typeof window === "string") await rex(["window", "rename", "-s", sid.data, window, label]);
+  await api("session.detach_block", { session_id: sid.data, block_id: block });
   return ok(block);
 }
 
@@ -129,11 +147,13 @@ type Found = { session: string; block: Block; shared: boolean };
 async function findAgent(conversation: string, agent: string): Promise<Found | null> {
   const viewer = await viewerSession(conversation);
   if (viewer?.rexSession != null) {
-    const block = (await blocksOf(viewer.rexSession) ?? []).find(b => b.label === sharedLabel(conversation, agent));
+    const block = (await sharedBlocks(viewer.rexSession) ?? []).find(b => b.label === sharedLabel(conversation, agent));
     if (block !== undefined) return { session: viewer.rexSession, block, shared: true };
   }
   const sid = await sessionId(sessionName(conversation));
   if (sid.kind !== "found") return null;
+  const hidden = (await sharedBlocks(sid.id) ?? []).find(b => b.label === sharedLabel(conversation, agent));
+  if (hidden !== undefined) return { session: sid.id, block: hidden, shared: false };
   const block = (await blocksOf(sid.id) ?? []).find(b => b.label === agent && agentBlock(b));
   return block === undefined ? null : { session: sid.id, block, shared: false };
 }
@@ -145,23 +165,21 @@ async function showInApp(session: string): Promise<void> {
   if (process.platform === "darwin") await exec(["/usr/bin/open", "-a", "Rex"]);
 }
 
-async function toggleBeside(conversation: string, agent: string, found: Found, viewer: Viewer): Promise<Result<Attach>> {
-  const beside = viewer.rexBlock ?? "";
-  const blocks = await blocksOf(found.session) ?? [];
-  const viewerWindow = blocks.find(b => b.id === beside)?.window ?? null;
-  if (viewerWindow === null) return fail("orca2's own Rex pane is not in this session any more; reopen orca2 in Rex");
-  const label = sharedLabel(conversation, agent);
-  if (found.block.window === viewerWindow) {
-    const made = await rex(["window", "new", "-s", found.session, label, "--keep-open", "--focus=false", "--json", "--", "/bin/sh", "-c", "sleep 600"]);
-    const holder = made.ok ? parse(made.out, RunSchema)?.block_ids?.[0] ?? null : null;
-    if (holder === null) return fail(`could not open a tab for ${agent}: ${made.ok ? "unexpected output" : made.err}`);
-    const moved = await rex(["move", "-s", found.session, found.block.id, "right", holder]);
-    await rex(["block", "close", holder]);
-    return moved.ok ? ok({ kind: "shown", note: `${agent} is back in its own Rex tab` }) : fail(`could not move ${agent} back: ${moved.err}`);
+async function toggleTab(agent: string, found: Found): Promise<Result<Attach>> {
+  if (found.block.window !== "") {
+    const hidden = await api("session.detach_block", { session_id: found.session, block_id: found.block.id });
+    return hidden.ok ? ok({ kind: "shown", note: `${agent} is hidden again and keeps running` }) : fail(`could not hide ${agent}: ${hidden.err}`);
   }
-  const moved = await rex(["move", "-s", found.session, found.block.id, "right", beside, "--ratio", "45"]);
-  if (!moved.ok) return fail(`could not open ${agent} beside orca2: ${moved.err}`);
-  return ok({ kind: "shown", note: `${agent} is open beside orca2 (attach again to put it back in its tab; closing that pane stops it)` });
+  const made = await rex(["window", "new", "-s", found.session, agent, "--keep-open", "--json", "--", "/bin/sh", "-c", "sleep 600"]);
+  const opened = made.ok ? parse(made.out, RunSchema) : null;
+  const holder = opened?.block_ids?.[0] ?? null;
+  if (holder === null) return fail(`could not open a tab for ${agent}: ${made.ok ? "unexpected output" : made.err}`);
+  const placed = await api("session.move_block", { session_id: found.session, block_id: found.block.id, anchor_block_id: holder, direction: "horizontal", side: "after" });
+  await rex(["block", "close", holder]);
+  if (!placed.ok) return fail(`could not open ${agent}: ${placed.err}`);
+  const window = opened?.window_id;
+  if (typeof window === "string") await rex(["focus", "-s", found.session, window]);
+  return ok({ kind: "shown", note: `${agent} is open in its own Rex tab (open it again here to hide it; closing the tab stops it)` });
 }
 
 export const rexRunner: Runner = {
@@ -174,16 +192,22 @@ export const rexRunner: Runner = {
     const names = new Set<string>();
     const viewer = await viewerSession(conversation);
     if (viewer?.rexSession != null) {
-      const shared = await blocksOf(viewer.rexSession);
+      const shared = await sharedBlocks(viewer.rexSession);
       if (shared === null) return null;
       for (const b of shared) { const agent = agentOf(conversation, b.label); if (b.live && agent !== null) names.add(agent); }
     }
     const sid = await sessionId(sessionName(conversation));
     if (sid.kind === "unknown") return null;
     if (sid.kind === "found") {
-      const blocks = await blocksOf(sid.id);
+      const blocks = await sharedBlocks(sid.id);
       if (blocks === null) return null;
-      for (const b of blocks) if (b.live && agentBlock(b)) names.add(b.label);
+      for (const b of blocks) {
+        const agent = agentOf(conversation, b.label);
+        if (b.live && agent !== null) names.add(agent);
+      }
+      const legacy = await blocksOf(sid.id);
+      if (legacy === null) return null;
+      for (const b of legacy) if (b.live && agentBlock(b)) names.add(b.label);
     }
     return [...names];
   },
@@ -191,8 +215,11 @@ export const rexRunner: Runner = {
     if (rexBinary() === null) return fail("Rex is not installed");
     const found = await findAgent(conversation, label);
     if (found === null) return fail(`${label} has no Rex window (it may have ended)`);
-    const viewer = await viewerSession(conversation);
-    if (found.shared && viewer !== null) return toggleBeside(conversation, label, found, viewer);
+    if (found.block.label === sharedLabel(conversation, label)) {
+      const toggled = await toggleTab(label, found);
+      if (toggled.ok && !found.shared && found.block.window === "") await showInApp(found.session);
+      return toggled;
+    }
     await rex(["focus", "-s", found.session, found.block.window]);
     await showInApp(found.session);
     return ok({ kind: "shown", note: `showing ${label} in Rex` });
@@ -201,15 +228,11 @@ export const rexRunner: Runner = {
     if (!rexUsed()) return;
     const viewer = await viewerSession(conversation);
     if (viewer?.rexSession != null) {
-      const shared = await blocksOf(viewer.rexSession) ?? [];
-      const windowLabel = new Map(shared.map(b => [b.window, b.windowLabel]));
-      for (const b of shared.filter(x => x.label === sharedLabel(conversation, agent))) {
-        if (windowLabel.get(b.window) === b.label) await rex(["window", "close", "-s", viewer.rexSession, b.window]);
-        else await rex(["block", "close", b.id]);
-      }
+      for (const b of (await sharedBlocks(viewer.rexSession) ?? []).filter(x => x.label === sharedLabel(conversation, agent))) await rex(["block", "close", b.id]);
     }
     const sid = await sessionId(sessionName(conversation));
     if (sid.kind !== "found") return;
+    for (const b of (await sharedBlocks(sid.id) ?? []).filter(x => x.label === sharedLabel(conversation, agent))) await rex(["block", "close", b.id]);
     const windows = new Set((await blocksOf(sid.id) ?? []).filter(b => b.label === agent && agentBlock(b)).map(b => b.window));
     for (const window of windows) await rex(["window", "close", "-s", sid.id, window]);
   },

@@ -23,6 +23,7 @@ case "$1" in
           if [ "$2" = new ]; then echo '{"window_id":"window:holder","block_ids":["block:holder"]}'; fi ;;
   block) if [ "$2" = call ]; then f=$(file process "$4"); if [ -f "$f" ]; then cat "$f"; else echo "Error: block target not found" >&2; exit 3; fi; fi ;;
   run) cat "$REX_FAKE/run.json" ;;
+  api) if [ "$3" = session.list_blocks ]; then cat "$REX_FAKE/blocks.json"; else echo '{"revision":1}'; fi ;;
 esac
 `;
 
@@ -40,6 +41,7 @@ const runner = present(background.runner, "rex runner");
 beforeEach(() => {
   fake = mkdtempSync(join(tmpdir(), "orca2-rex-cli-"));
   writeFileSync(join(fake, "rex"), FAKE);
+  writeFileSync(join(fake, "blocks.json"), JSON.stringify({ blocks: [] }));
   chmodSync(join(fake, "rex"), 0o755);
   Object.assign(process.env, { REX_BIN_DIR: fake, REX_FAKE: fake });
   rmSync(join(paths.globalData, "rex"), { recursive: true, force: true });
@@ -54,8 +56,8 @@ test("Rex is left alone until orca2 has opened a session there", async () => {
   expect(log()).toEqual([]);
 });
 
-test("an agent opens as a labelled, kept-open window of the conversation's session, never starting a server or carrying a secret", async () => {
-  json("windows", SID, { windows: [window("window:old", "worker-a", [["block:old", "worker-a"]])] });
+test("an agent starts hidden (no tab) in the conversation's own session, labelled agent@chat, never starting a server or carrying a secret", async () => {
+  writeFileSync(join(fake, "blocks.json"), JSON.stringify({ blocks: [{ block_id: "block:old", label: "worker-a@c1", window_id: null }] }));
   json("process", "block:old", exited);
   writeFileSync(join(fake, "run.json"), JSON.stringify({ window_id: "window:new", block_ids: ["block:new"] }));
   expect(await runner.start(launch)).toEqual({ handle: "block:new", pid: null });
@@ -65,9 +67,9 @@ test("an agent opens as a labelled, kept-open window of the conversation's sessi
   expect(calls).toContain("--autostart=false new orca2-c1 -c /wt --window shell --json");
   expect(calls).toContain("--autostart=false block close block:old");
   const run = present(calls.find(line => line.includes(" run ")), "rex run call");
-  expect(run.startsWith(`--autostart=false run -s ${SID} --label worker-a -c /wt --keep-open --focus=false --shell=none --json -- /bin/sh -c `)).toBe(true);
+  expect(run.startsWith(`--autostart=false run -s ${SID} --label worker-a@c1 -c /wt --keep-open --focus=false --shell=none --json -- /bin/sh -c `)).toBe(true);
   expect(run.endsWith(" /logs/worker-a.log /bin/echo hi")).toBe(true);
-  expect(calls).toContain(`--autostart=false window rename -s ${SID} window:new worker-a`);
+  expect(calls).toContain(`--autostart=false api call session.detach_block {"session_id":"${SID}","block_id":"block:new"}`);
   expect(calls.join("\n")).not.toContain("hunter2");
   const file = present(/sh (\S+\.sh) /.exec(run)?.[1], "env file");
   expect(statSync(file).mode & 0o777).toBe(0o600);
@@ -99,34 +101,35 @@ test("the plugin declares its global marker and has no UI of its own", () => {
   expect(plugin.storage.map(s => s.scope)).toEqual(["global"]);
 });
 
-test("when orca2 itself runs in Rex, agents open as tabs of its session; attach moves one beside orca2 and back; stop closes only that pane", async () => {
+test("when orca2 itself runs in Rex, agents start hidden in its session; attach opens one in its own tab and again hides it; stop closes only that block", async () => {
   const mine = "session:mine";
   mkdirSync(paths.conversation("c1"), { recursive: true });
   writeFileSync(join(paths.conversation("c1"), "viewer.json"), JSON.stringify({ pid: process.pid, rexSession: mine, rexBlock: "block:orca" }));
+  writeFileSync(join(fake, "blocks.json"), JSON.stringify({ blocks: [] }));
   writeFileSync(join(fake, "run.json"), JSON.stringify({ window_id: "window:w", block_ids: ["block:w"] }));
   await runner.start(launch);
   const run = present(log().find(line => line.includes(" run ")), "rex run call");
   expect(run.startsWith(`--autostart=false run -s ${mine} --label worker-a@c1 `)).toBe(true);
   expect(log().some(line => line.includes(" new orca2-c1"))).toBe(false);
-  expect(log()).toContain(`--autostart=false window rename -s ${mine} window:w worker-a@c1`);
+  expect(log().at(-1)).toBe(`--autostart=false api call session.detach_block {"session_id":"${mine}","block_id":"block:w"}`);
 
-  const apart = { windows: [window("window:orca", "orca2", [["block:orca", "orca2"]]), window("window:w", "worker-a@c1", [["block:w", "worker-a@c1"]]),
-    window("window:other", "worker-a@c2", [["block:o", "worker-a@c2"]])] };
-  json("windows", mine, apart);
+  const hidden = { blocks: [{ block_id: "block:orca", label: "orca2", window_id: "window:orca" }, { block_id: "block:w", label: "worker-a@c1", window_id: null },
+    { block_id: "block:o", label: "worker-a@c2", window_id: null }] };
+  writeFileSync(join(fake, "blocks.json"), JSON.stringify(hidden));
   for (const b of ["block:orca", "block:w", "block:o"]) json("process", b, running);
   expect(await runner.alive("c1")).toEqual(["worker-a"]);
-  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is open beside orca2 (attach again to put it back in its tab; closing that pane stops it)" } });
-  expect(log().at(-1)).toBe(`--autostart=false move -s ${mine} block:w right block:orca --ratio 45`);
+  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is open in its own Rex tab (open it again here to hide it; closing the tab stops it)" } });
+  expect(log().slice(-3)).toEqual([
+    `--autostart=false api call session.move_block {"session_id":"${mine}","block_id":"block:w","anchor_block_id":"block:holder","direction":"horizontal","side":"after"}`,
+    "--autostart=false block close block:holder", `--autostart=false focus -s ${mine} window:holder`]);
 
-  json("windows", mine, { windows: [window("window:orca", "orca2", [["block:orca", "orca2"], ["block:w", "worker-a@c1"]])] });
-  json("process", "block:holder", running);
+  writeFileSync(join(fake, "blocks.json"), JSON.stringify({ blocks: [{ block_id: "block:w", label: "worker-a@c1", window_id: "window:holder" }] }));
   expect(await runner.alive("c1")).toEqual(["worker-a"]);
-  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is back in its own Rex tab" } });
-  expect(log().slice(-3)).toEqual([`--autostart=false window new -s ${mine} worker-a@c1 --keep-open --focus=false --json -- /bin/sh -c sleep 600`,
-    `--autostart=false move -s ${mine} block:w right block:holder`, "--autostart=false block close block:holder"]);
+  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is hidden again and keeps running" } });
+  expect(log().at(-1)).toBe(`--autostart=false api call session.detach_block {"session_id":"${mine}","block_id":"block:w"}`);
 
   await runner.stop("c1", "worker-a");
   expect(log()).toContain("--autostart=false block close block:w");
-  expect(log().some(line => line.includes("window close") && line.includes("window:orca"))).toBe(false);
+  expect(log().some(line => line.includes("window close"))).toBe(false);
   rmSync(join(paths.conversation("c1"), "viewer.json"));
 });
