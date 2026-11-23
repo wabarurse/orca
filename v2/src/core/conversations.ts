@@ -16,7 +16,7 @@ export type Conversation = {
 
 const ID = /^c-[a-f0-9]{8}$/;
 
-const ConversationFile = z.object({ name: z.string(), directory: z.string(), createdAt: z.string(), bubble: z.unknown(), noBubble: z.boolean().default(false), model: z.unknown(), effort: z.unknown(), fast: z.boolean().default(false) });
+const ConversationFile = z.object({ name: z.string(), directory: z.string(), createdAt: z.string(), bubble: z.unknown(), noBubble: z.boolean().default(false), model: z.unknown(), effort: z.string().nullable().catch(null), fast: z.boolean().default(false) });
 
 export function validId(id: string): boolean {
   return ID.test(id);
@@ -38,7 +38,7 @@ export async function readConversation(id: string): Promise<Conversation | null>
   if (!raw.success) return null;
   return { id, name: raw.data.name, directory: raw.data.directory, bubble: typeof raw.data.bubble === "string" ? raw.data.bubble : null, noBubble: raw.data.noBubble,
     model: typeof raw.data.model === "string" ? raw.data.model : null,
-    effort: typeof raw.data.effort === "string" ? raw.data.effort : null, fast: raw.data.fast, createdAt: raw.data.createdAt };
+    effort: raw.data.effort, fast: raw.data.fast, createdAt: raw.data.createdAt };
 }
 
 export async function saveConversation(conversation: Conversation): Promise<void> {
