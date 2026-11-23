@@ -260,4 +260,29 @@ describe("tui", () => {
     await saveConfig({ plugins: [] });
     t.app.stop();
   });
+
+  test("the footer counts plugins at its right; Ctrl+P lists them with their pages, Enter opens one, t turns it off for the bubble", async () => {
+    registerBuiltins(BUILTINS);
+    await saveConfig({ plugins: ["example"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-plugins-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    await t.app.refresh();
+    const screen = t.screen();
+    const footer = screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : "";
+    expect(footer).toMatch(/0 agents.* 1 plugin · Ctrl\+P │/);
+    await t.press({ name: "p", ctrl: true });
+    expect(await t.shows("[Plugins]")).toContain("example");
+    expect(t.text()).toMatch(/example\s+on\s+Pins/);
+    await t.press({ name: "enter" });
+    expect(await t.shows("[Pins]")).toContain("[Pins]");
+    await t.press({ name: "escape" }, { name: "p", ctrl: true });
+    await t.press({ name: "char", text: "t" });
+    expect(await t.shows("example off for this bubble")).toMatch(/example\s+off/);
+    await t.press({ name: "escape" });
+    const after = t.screen();
+    expect(after?.kind === "chat" ? Bun.stripANSI(after.footer.join("\n")) : "").toContain("0 plugins · Ctrl+P");
+    await saveConfig({ plugins: [] });
+    t.app.stop();
+  });
 });
