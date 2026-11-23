@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
+import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
@@ -713,7 +714,7 @@ export class App {
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
-      account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.conversation.directory], fin };
+      account: this.account.length > 0 ? `${this.account} · ${this.model}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
       welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
@@ -724,6 +725,13 @@ export class App {
     if (modal.kind === "pick") return `${modal.title}  ↑↓ choose · enter · esc`;
     return `${modal.prompt}${modal.state.text}`;
   }
+}
+
+const tokens = (n: number): string => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+
+export function contextLine(used: number | null, model: string): string {
+  const window = contextWindow({}, model);
+  return ` · ctx ${used === null ? "-" : tokens(used)}/${window.estimated ? "~" : ""}${tokens(window.limit)}`;
 }
 
 function edit(state: editor.EditState, key: Key): editor.EditState {
