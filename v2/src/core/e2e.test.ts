@@ -11,9 +11,24 @@ import { readSpans } from "./spans";
 import { openTranscript } from "./transcript";
 import type { Span } from "./types";
 
-const home = tempHome("e2e");
 let conversation = "";
-afterAll(async () => { if (conversation.length > 0) await stopDaemon(conversation); delete process.env.ORCA2_SCRIPTED; delete process.env.ORCA2_SELF; });
+let group: number | null = null;
+const groupAlive = (pgid: number): boolean => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
+const endGroup = async (pgid: number): Promise<void> => {
+  const signals: NodeJS.Signals[] = ["SIGTERM", "SIGKILL"];
+  for (const signal of signals) {
+    if (!groupAlive(pgid)) return;
+    try { process.kill(-pgid, signal); } catch {}
+    for (let i = 0; i < 30 && groupAlive(pgid); i++) await Bun.sleep(100);
+  }
+};
+afterAll(async () => {
+  if (conversation.length > 0) await stopDaemon(conversation);
+  if (group !== null) await endGroup(group);
+  delete process.env.ORCA2_SCRIPTED;
+  delete process.env.ORCA2_SELF;
+});
+const home = tempHome("e2e");
 
 const tool = (id: string, name: string, input: unknown) => ({ type: "tool_use", id, name, input });
 const text = (t: string) => ({ type: "text", text: t, citations: null });
@@ -41,7 +56,12 @@ test("orchestrator → worker → report → orchestrator, through the daemon an
   const c = await createConversation(repo, "e2e");
   conversation = c.id;
   await say(c.id, "please add hello.txt", [], "steer");
-  expect((await ensureDaemon(c.id, null)).ok).toBe(true);
+  const daemon = await ensureDaemon(c.id, null);
+  expect(daemon.ok).toBe(true);
+  if (daemon.ok) {
+    const pgid = Number(Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(daemon.data)]).stdout.toString().trim());
+    group = Number.isInteger(pgid) && pgid > 1 ? pgid : null;
+  }
   const transcript = openTranscript(paths.transcript(c.id, "orchestrator"));
   const replies = (): string[] => { transcript.refresh(); return transcript.all().flatMap(e => e.type === "message" && e.message.role === "assistant" && Array.isArray(e.message.content) ? e.message.content.flatMap(b => b.type === "text" ? [b.text] : []) : []); };
   for (let i = 0; i < 200 && !replies().includes("the worker wrote hello.txt"); i++) await Bun.sleep(100);
