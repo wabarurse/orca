@@ -52,6 +52,21 @@ describe("agent loop", () => {
     expect(await pending(s.conversation, "orchestrator")).toEqual([]);
   });
 
+  test("a tool call cut off by a crash is closed before new input is written, so its result follows it directly", async () => {
+    const s = await setup([[text("back")]], []);
+    await s.transcript.append({ type: "message", inbox: [], message: { role: "user", content: "[user] go" } });
+    await s.transcript.append({ type: "message", inbox: [], message: { role: "assistant", content: [toolUse("t1", "echo", { text: "a" })] } });
+    await put(s.conversation, "orchestrator", "user", "hi", { images: [], delivery: "steer" });
+    expect((await s.agent.run()).text).toBe("back");
+    const stored = s.transcript.all().flatMap(entry => entry.type === "message" ? [JSON.stringify(entry.message.content)] : []);
+    const result = stored.findIndex(content => content.includes("tool_result"));
+    expect(result).toBeGreaterThan(-1);
+    expect(stored.findIndex(content => content.includes("[user] hi"))).toBeGreaterThan(result);
+    const sent = s.provider.calls[0]?.messages ?? [];
+    const use = sent.findIndex(m => JSON.stringify(m.content).includes("tool_use"));
+    expect(JSON.stringify(sent[use + 1]?.content)).toContain("tool_result");
+  });
+
   test("steer input joins the next tool batch; follow-up input waits until the work is done", async () => {
     let conversation = "";
     const s = await setup([[toolUse("t1", "echo", { text: "a" })], [text("first done")], [text("follow handled")]], [echoTool(async () => {

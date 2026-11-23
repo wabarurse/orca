@@ -5,7 +5,7 @@ import { z } from "zod";
 import { MessageRecord } from "../inbox";
 import type { Entry, NewEntry } from "../types";
 import { publish } from "./storage";
-import { paired } from "./pairs";
+import { paired, pairResults } from "./pairs";
 import { parseJson } from "../../config";
 
 export type Transcript = {
@@ -64,10 +64,10 @@ function walk(byUuid: Map<string, Entry>, head: string | null, stopAtSummary: bo
 }
 
 export function contextMessages(entries: Entry[]): MessageParam[] {
-  return entries.flatMap((entry): MessageParam[] => {
+  return pairResults(entries.flatMap((entry): MessageParam[] => {
     if (entry.type === "summary") return [{ role: "user", content: entry.text }, ...entry.retained];
     return entry.type === "message" ? [entry.message] : [];
-  });
+  }));
 }
 
 export function openTranscript(path: string): Transcript {
