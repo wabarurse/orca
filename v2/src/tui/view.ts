@@ -142,7 +142,7 @@ export function tail(events: AgentEvent[], lastDurableText: string, cols: number
 
 export type Composer = { prompt: string; state: editor.EditState };
 
-export function composerRows(c: Composer, counts: string, cols: number, maxRows: number): { rows: string[]; row: number; col: number } {
+export function composerRows(c: Composer, counts: string, right: string, cols: number, maxRows: number): { rows: string[]; row: number; col: number } {
   const inner = Math.max(4, cols - 4);
   const prompt = fit(sanitize(c.prompt), Math.max(0, inner - 4));
   const indent = visibleLength(prompt);
@@ -153,7 +153,9 @@ export function composerRows(c: Composer, counts: string, cols: number, maxRows:
     const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), inner);
     return `${railMark("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${railMark("│")}`;
   });
-  const status = counts.length > 0 ? fit(counts, inner) : "";
-  const bottom = status.length > 0 ? `${railMark("│")} ${dim(status)}${" ".repeat(Math.max(0, inner - visibleLength(status)))} ${railMark("│")}` : railMark(`└${"─".repeat(cols - 2)}┘`);
+  const tail = right.length > 0 && visibleLength(counts) + right.length + 3 <= inner ? right : "";
+  const status = counts.length > 0 || tail.length > 0 ? fit(counts, inner - (tail.length > 0 ? tail.length + 3 : 0)) : "";
+  const gap = " ".repeat(Math.max(0, inner - visibleLength(status) - tail.length));
+  const bottom = status.length > 0 || tail.length > 0 ? `${railMark("│")} ${dim(`${status}${gap}${tail}`)} ${railMark("│")}` : railMark(`└${"─".repeat(cols - 2)}┘`);
   return { rows: [railMark(`┌${"─".repeat(cols - 2)}┐`), ...body, bottom], row: 1 + lay.row - top, col: 2 + indent + lay.col };
 }

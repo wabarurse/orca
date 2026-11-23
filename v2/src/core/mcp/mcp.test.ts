@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { noLinks } from "../plugins/testing";
 import { z } from "zod";
 import { mkdtemp, rm } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -41,7 +42,7 @@ const pid = async (): Promise<number> => {
 };
 const ctxFor = (role: "orchestrator" | "worker"): ToolContext => ({ conversation: "c-00000000", agent: role, role, branch: null, cwd: home, data: home, trusted: false, pluginSkills: [], guard: [],
   callId: "call", signal: new AbortController().signal, model: "m", provider: { name: "anthropic", complete: async () => { throw new Error("no"); }, models: async () => [] }, settings: null,
-  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
+  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", show: async () => "", confirm: async () => false }, links: noLinks });
 const alive = (id: number) => { try { process.kill(id, 0); return true; } catch { return false; } };
 
 test("mcp.json: a command or a url per server, ${VAR} from the environment, and one bad entry never hides the others", () => {

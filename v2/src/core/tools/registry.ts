@@ -1,4 +1,5 @@
 import type { ImageBlockParam, TextBlockParam, Tool as ApiTool } from "@anthropic-ai/sdk/resources/messages";
+import type { Links } from "../plugins/types";
 import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
 import type { Role } from "../types";
@@ -19,12 +20,13 @@ export type AgentInfo = {
   lastTool: string | null;
 };
 
-export type SpawnRequest = { bundle: string; branch: string; brief: string; fresh: boolean; images: string[] };
+export type SpawnRequest = { bundle: string; branch: string; brief: string; fresh: boolean; images: string[]; runner: string | null };
 
 export type Runtime = {
   spawn: (request: SpawnRequest) => Promise<AgentInfo>;
   agents: () => Promise<AgentInfo[]>;
   stop: (agent: string) => Promise<string>;
+  show: (agent: string) => Promise<string>;
   confirm: (question: string) => Promise<boolean>;
 };
 
@@ -44,6 +46,7 @@ export type ToolContext = {
   provider: Provider;
   settings: RequestSettings | null;
   runtime: Runtime;
+  links: Links;
 };
 
 export type ToolResult = string | (TextBlockParam | ImageBlockParam)[];

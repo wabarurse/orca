@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { linksFor } from "./context";
 import { pluginData } from "../bubbles";
 import type { Bound, LoopHooks } from "../loop/hooks";
 import { rolePrompt } from "../prompt";
@@ -28,7 +29,9 @@ export type Assembled = {
   problems: PluginProblem[];
 };
 
-export type AssembleInput = { conversation: string; agent: string; bundle: string; cwd: string; directory: string; trusted: boolean };
+export type AssembleInput = { conversation: string; agent: string; bundle: string; branch: string | null; cwd: string; directory: string; trusted: boolean };
+
+const ownedBy = (tool: Tool, owner: string): Tool => ({ ...tool, run: (input, ctx) => tool.run(input, { ...ctx, links: linksFor(ctx.conversation, owner) }) });
 
 export async function assemble(input: AssembleInput): Promise<Result<Assembled>> {
   const { plugins: available, problems } = await availablePlugins(input.directory, input.trusted);
@@ -55,11 +58,11 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
       const existing = tools.get(name);
       if (existing !== undefined && existing.owner !== "core") { problems.push({ name: loaded.plugin.name, dir: loaded.dir, problem: `tool ${name} is already provided by ${existing.owner}` }); continue; }
       if (existing !== undefined && !entry.replaces) { problems.push({ name: loaded.plugin.name, dir: loaded.dir, problem: `tool ${name} would replace a core tool without replaces: true` }); continue; }
-      tools.set(name, { tool: entry.tool, owner: loaded.plugin.name });
+      tools.set(name, { tool: ownedBy(entry.tool, loaded.plugin.name), owner: loaded.plugin.name });
     }
   }
 
-  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, cwd: input.cwd,
+  const ctxFor = (loaded: LoadedPlugin): PluginContext => ({ plugin: loaded.plugin.name, conversation: input.conversation, agent: input.agent, role, branch: input.branch, cwd: input.cwd, links: linksFor(input.conversation, loaded.plugin.name),
     data: scope => pluginData(input.conversation, loaded.plugin.name, scope) });
   const bind = <H>(pick: (loaded: LoadedPlugin) => H[]): Bound<H>[] => used.flatMap(loaded => pick(loaded).map(hook => ({ hook, ctx: ctxFor(loaded) })));
   const hooks: LoopHooks = {
@@ -69,7 +72,10 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
 
   const additions = used.flatMap(loaded => loaded.plugin.prompt.filter(p => p.role === role).map(p => `[${loaded.plugin.name}] ${p.text}`));
   const storage = used.flatMap(loaded => loaded.plugin.storage.map(s => `- ${loaded.plugin.name} (${s.scope}): ${s.about}`));
-  const system = [bundle.prompt, ...(additions.length > 0 ? ["Plugins:", ...additions] : []), ...(storage.length > 0 ? ["Plugin data under $ORCA_DATA:", ...storage] : [])].join("\n\n");
+  const roster = used.map(loaded => `- ${loaded.plugin.name}: ${loaded.plugin.description}`);
+  const system = [bundle.prompt,
+    ...(roster.length > 0 ? [`Plugins on in this bubble (${roster.length}; the user turns them on or off with Ctrl+P):`, ...roster] : []),
+    ...(additions.length > 0 ? ["Plugin instructions:", ...additions] : []), ...(storage.length > 0 ? ["Plugin data under $ORCA_DATA:", ...storage] : [])].join("\n\n");
   const skills = used.flatMap(loaded => loaded.plugin.skills.map(skill => join(loaded.dir, skill)));
   return ok({ bundle, plugins: used, tools: [...tools.values()].map(t => t.tool), system, hooks, guard: used.flatMap(l => l.plugin.guard), skills, problems });
 }

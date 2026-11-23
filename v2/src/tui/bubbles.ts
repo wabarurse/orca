@@ -16,7 +16,7 @@ export async function bubbleEntries(directory: string): Promise<{ entries: Bubbl
       conversations: conversations.filter(c => c.bubble === bubble.id) };
   }));
   const known = new Set(bubbles.map(b => b.id));
-  entries.sort((a, b) => b.nodes - a.nodes || a.bubble.name.localeCompare(b.bubble.name));
+  entries.sort((a, b) => b.nodes !== a.nodes ? b.nodes - a.nodes : a.bubble.name.localeCompare(b.bubble.name));
   return { entries, loose: conversations.filter(c => c.directory === directory && (c.bubble === null || !known.has(c.bubble))) };
 }
 

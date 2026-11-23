@@ -1,4 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
+import { noLinks } from "../../core/plugins/testing";
 import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "../anthropic";
 import { openai } from "../openai";
@@ -9,7 +10,7 @@ import type { ToolContext } from "../../core/tools/registry";
 
 const toolContext = (signal: AbortSignal): Omit<ToolContext, "provider" | "model" | "settings"> => ({ conversation: "c-00000000", agent: "reviewer-x", role: "reviewer", branch: "x",
   cwd: "/private-project", data: "/never", trusted: false, pluginSkills: [], guard: [], callId: "call", signal,
-  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false } });
+  runtime: { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", show: async () => "", confirm: async () => false }, links: noLinks });
 import { codexSSE, fakeCodexTokens } from "../../test/codex";
 import { claudeSearchFixture, codexSearchFixture, codexStreamSearchFixture } from "../../test/web-search";
 import type { Provider } from "../provider";

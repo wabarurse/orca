@@ -1,4 +1,5 @@
 import type { ContentBlock, ContentBlockParam, MessageParam, ToolResultBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import { linksFor } from "../plugins/context";
 import type { CompleteRequest, Provider, Turn } from "../../api";
 import { restartable } from "../../api/errors";
 import type { RequestSettings } from "../../api/model";
@@ -192,7 +193,7 @@ export function createAgent(setup: AgentSetup): { run: () => Promise<RunResult> 
         if (decision.action === "block") result = { ok: false, content: decision.reason };
         else {
           const ctx: ToolContext = { conversation: setup.conversation, agent: setup.agent, role: setup.role, branch: setup.branch, cwd: setup.cwd, data: setup.data,
-            trusted: setup.trusted, pluginSkills: setup.pluginSkills, guard: setup.guard, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime };
+            trusted: setup.trusted, pluginSkills: setup.pluginSkills, guard: setup.guard, callId: block.id, signal: setup.signal, model: model.model, provider: model.provider, settings: model.settings, runtime: setup.runtime, links: linksFor(setup.conversation, "core") };
           try {
             const content = await tool.run(decision.input, ctx);
             result = { ok: !(typeof content === "string" && content.startsWith("refused:")), content };

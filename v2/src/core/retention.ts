@@ -1,8 +1,6 @@
 import { errorMessage } from "../config";
-import { pluginData } from "./bubbles";
 import { readConversation } from "./conversations";
-import { put } from "./inbox";
-import { availablePlugins, enabledNames } from "./plugins";
+import { availablePlugins, backgroundContext, enabledNames } from "./plugins";
 import type { BackgroundContext, Retention } from "./plugins/types";
 import { archiveItems, forgetItems, shelfEntry, shelfKey } from "./shelf";
 import { trustState } from "./trust";
@@ -24,8 +22,7 @@ export async function retentionFor(conversation: string): Promise<BoundRetention
   for (const name of await enabledNames(conversation)) {
     const loaded = plugins.get(name);
     if (loaded === undefined) continue;
-    const ctx: BackgroundContext = { plugin: name, conversation, directory: meta.directory, data: scope => pluginData(conversation, name, scope),
-      notify: async text => { await put(conversation, "orchestrator", name, text, { images: [], delivery: "steer" }); } };
+    const ctx = backgroundContext(conversation, name, meta.directory);
     for (const retention of loaded.plugin.retention) out.push({ plugin: name, retention, ctx });
   }
   return out;

@@ -20,7 +20,7 @@ const items = [
   { id: "kept", at: new Date(NOW - 30 * DAY).toISOString() },
 ];
 const plugin = definePlugin({
-  name: "keeper", description: "test", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], ui: null, background: null,
+  name: "keeper", description: "test", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], provides: [], uses: [], emits: [], on: [], ui: null, background: null,
   retention: [{ tab: "things", archiveAfterDays: 7, purgeAfterDays: 14, settled: async () => items, locate: async () => null,
     purge: async ids => { purged.push(...ids); } }],
 });
