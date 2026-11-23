@@ -11,7 +11,7 @@ import { saveImage } from "../core/images";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
-import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
+import type { Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
 import { chooseRunner, runnerNames, stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
@@ -21,6 +21,7 @@ import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
+import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
@@ -85,6 +86,8 @@ export class App {
   private lastSlow = 0;
   private quitting = false;
   private noBubble = false;
+  private activePlugins: string[] = [];
+  private pluginsPage: { plugins: Awaited<ReturnType<typeof availablePlugins>>; enabled: string[] } | null = null;
   private openTabs: { id: string; name: string; busy: boolean }[] = [];
   private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
 
@@ -144,6 +147,7 @@ export class App {
     const loaded = await loadUis(conversation.id);
     this.uis = loaded.uis;
     this.folds = loaded.folds;
+    this.activePlugins = loaded.active;
     if (loaded.problems.length > 0) this.flash(loaded.problems.join("; "));
     this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
     await this.startDaemon(conversation.id);
@@ -430,7 +434,7 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Alt+←/→ switch chats · /rename · /close · /compact /model /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
@@ -444,7 +448,7 @@ export class App {
       this.flash(`model ${model} from the next request`);
       return;
     }
-    if (name === "plugins") { await this.pluginsMenu(); return; }
+    if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
     if (name === "mux") { await this.mux(args.trim()); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
@@ -472,24 +476,34 @@ export class App {
     return picked === null ? null : names[picked] ?? null;
   }
 
-  private async pluginsMenu(): Promise<void> {
-    const { plugins, problems } = await availablePlugins(this.deps.directory, await trustState(this.deps.directory) === "trusted");
-    const enabled = await enabledNames(this.conversation.id);
-    const names = [...plugins.keys()].sort();
-    const options = [...names.map(n => `${enabled.includes(n) ? "[on] " : "[off]"} ${n} — ${plugins.get(n)?.plugin.description ?? ""}`), ...problems.map(p => `[!!]  ${p.name} — ${p.problem}`)];
-    if (options.length === 0) { this.flash("no plugins installed"); return; }
-    const choice = await this.ask({ kind: "pick", title: "plugins for this bubble (Enter toggles; config.toml holds the defaults)", options });
-    const name = choice === null ? undefined : names[choice];
-    if (name === undefined) return;
+  private pluginPages(): Map<string, Tab[]> {
+    return new Map(this.uis.map(bound => [bound.name, bound.ui.tabs]));
+  }
+
+  private openPluginPage(row: Row | undefined): void {
+    const page = this.page;
+    if (page === null || row === undefined || isProblem(row)) return;
+    const at = this.tabs().findIndex(t => t.plugin !== null && t.plugin.name === row.id);
+    if (at === -1) { page.status = this.activePlugins.includes(row.id) ? `${row.id} has no page; it adds tools or background work` : `${row.id} is off; t turns it on`; this.draw(); return; }
+    this.openPage(at).catch((error: unknown) => { this.failed(error); });
+  }
+
+  private async togglePlugin(row: Row | undefined): Promise<void> {
+    if (row === undefined || isProblem(row)) return;
+    const name = row.id, on = this.activePlugins.includes(name) || (this.pluginsPage?.enabled.includes(name) ?? false);
     const ensured = this.conversation.bubble === null ? await ensureBubble(this.conversation.id) : null;
     if (ensured !== null && !ensured.ok) { this.flash(ensured.error, true); return; }
     const bubble = ensured === null ? this.conversation.bubble : ensured.data.id;
     if (bubble === null) return;
-    const switched = await setBubblePlugin(bubble, name, enabled.includes(name) ? "off" : "on");
-    if (!switched.ok) { this.flash(switched.error); return; }
+    const switched = await setBubblePlugin(bubble, name, on ? "off" : "on");
+    if (!switched.ok) { this.flash(switched.error, true); return; }
+    const index = this.page?.index ?? 0;
     await this.switchTo((await readConversation(this.conversation.id)) ?? this.conversation);
-    this.flash(`${name} ${enabled.includes(name) ? "off" : "on"} for this bubble (from the next turn)`);
+    await this.openPage(this.tabs().findIndex(t => t.id === "plugins"));
+    if (this.page !== null) { this.page.index = index; this.page.status = `${name} ${on ? "off" : "on"} for this bubble (agents pick it up from their next turn)`; await this.loadPage(); }
+    this.draw();
   }
+
 
   private async quit(): Promise<void> {
     this.quitting = true;
@@ -519,7 +533,8 @@ export class App {
   private tabs(): (WorkTab & { chord: string | null; plugin: BoundUi | null })[] {
     return [{ id: "agents", title: "Agents", count: null, chord: "a", plugin: null },
       ...this.uis.flatMap(bound => bound.ui.tabs.map(tab => ({ id: tab.id, title: tab.title, count: null, chord: tab.chord, plugin: bound }))),
-      { id: "bubbles", title: "Bubbles", count: null, chord: "b", plugin: null }];
+      { id: "bubbles", title: "Bubbles", count: null, chord: "b", plugin: null },
+      { id: "plugins", title: "Plugins", count: null, chord: "p", plugin: null }];
   }
 
   private async openPage(tab: number): Promise<void> {
@@ -534,7 +549,11 @@ export class App {
     const tab = this.tabs()[page.tab];
     if (tab === undefined) return;
     try {
-      if (tab.plugin === null && tab.id === "bubbles") {
+      if (tab.plugin === null && tab.id === "plugins") {
+        const plugins = await availablePlugins(this.conversation.directory, await trustState(this.conversation.directory) === "trusted");
+        this.pluginsPage = { plugins, enabled: await enabledNames(this.conversation.id) };
+        page.rows = pluginRows(plugins.plugins, plugins.problems, this.pluginsPage.enabled, this.pluginPages());
+      } else if (tab.plugin === null && tab.id === "bubbles") {
         this.bubbles = await bubbleEntries(this.conversation.directory);
         page.rows = bubbleRows(this.bubbles, this.conversation.id);
       } else if (tab.plugin === null) {
@@ -560,6 +579,7 @@ export class App {
       return [...archivedSection(await shelfEntry(this.conversation.id, shelfKey(tab.plugin.name, tab.id)), row), ...own];
     }
     if (tab.id === "bubbles") return bubbleDetails(this.bubbles, row);
+    if (tab.id === "plugins") return this.pluginsPage === null ? [] : pluginDetails(this.pluginsPage.plugins.plugins, this.pluginsPage.plugins.problems, this.pluginsPage.enabled, this.pluginPages(), row);
     const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
     if (run === undefined) return [];
     const log = await readFile(run.log, "utf8").catch(() => "");
@@ -584,6 +604,8 @@ export class App {
     else if (char === "r") page.status = "";
     else if (tab?.id === "bubbles" && (key.name === "enter" || char === "n")) { await this.bubbleEnter(page.rows[page.index]); return; }
     else if (tab?.id === "bubbles" && char === "d") await this.deleteChat(page.rows[page.index]);
+    else if (tab?.id === "plugins" && key.name === "enter") { this.openPluginPage(page.rows[page.index]); return; }
+    else if (tab?.id === "plugins" && char === "t") { await this.togglePlugin(page.rows[page.index]); return; }
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
     else if (tab?.plugin != null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
     else if (tab?.plugin != null) {
@@ -639,7 +661,7 @@ export class App {
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
+      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
@@ -663,7 +685,8 @@ export class App {
       }
     }
     const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, state: this.modal.state } : { prompt: "› ", state: this.composer };
-    const box = composerRows(composing, this.counts, cols, Math.max(1, Math.floor(t.rows / 3)));
+    const plugins = `${this.activePlugins.length} plugin${this.activePlugins.length === 1 ? "" : "s"} · Ctrl+P`;
+    const box = composerRows(composing, this.counts, plugins, cols, Math.max(1, Math.floor(t.rows / 3)));
     cursor = { row: footer.length + box.row, col: box.col };
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
