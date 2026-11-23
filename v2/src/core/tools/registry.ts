@@ -26,7 +26,6 @@ export type Runtime = {
   spawn: (request: SpawnRequest) => Promise<AgentInfo>;
   agents: () => Promise<AgentInfo[]>;
   stop: (agent: string) => Promise<string>;
-  show: (agent: string) => Promise<string>;
   confirm: (question: string) => Promise<boolean>;
 };
 

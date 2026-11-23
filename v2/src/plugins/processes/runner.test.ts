@@ -19,12 +19,13 @@ const boxRunner: Runner = {
   start: async launch => { started.push(launch); running.set(launch.agent, Bun.spawn(launch.argv, { cwd: launch.cwd, stdout: "ignore", stderr: "ignore" })); return { handle: launch.agent, pid: null }; },
   alive: async () => [...running.entries()].filter(([, p]) => p.exitCode === null && p.signalCode === null).map(([label]) => label),
   stop: async (_conversation, label) => { stopped.push(label); running.get(label)?.kill(); },
-  attach: async (_conversation, label) => ({ ok: true, data: { kind: "shown", note: `showing ${label}` } }),
+  screen: async (_conversation, label) => ({ ok: true, data: [`screen of ${label}`] }),
+  send: async () => ({ ok: true, data: null }),
 };
 const box = definePlugin({ name: "box", description: "a test runner", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], retention: [],
   provides: [], uses: [], emits: [], on: [], ui: null, background: "./background.ts" });
 
-test("with another runner chosen, a background command runs in its window (labelled proc-<id>), its exit is still read, stop goes through the runner and Enter attaches", async () => {
+test("with another runner chosen, a background command runs in its window (labelled proc-<id>), its exit is still read, stop goes through the runner and Enter watches it", async () => {
   registerBuiltins([{ name: "box", dir: mkdtempSync(join(tmpdir(), "orca2-box-")), index: async () => ({ default: box }), ui: null,
     background: async () => ({ default: defineBackground({ watchers: [], memory: null, runner: boxRunner, stop: null, remove: null }) }) }]);
   await saveConfig({ plugins: ["box", "processes"], runner: "box" });
@@ -42,9 +43,10 @@ test("with another runner chosen, a background command runs in its window (label
   const pctx = pluginContext(chat.id, "processes", chat.directory);
   const rows = await tab.rows(pctx);
   expect(rows.find(r => r.id === slow)?.status).toBe("running");
-  const { host, attached } = recordingHost(pctx, { pick: null, input: null, confirm: true });
-  await present(tab.actions.find(a => a.key === "enter"), "attach").run(present(rows.find(r => r.id === slow), "row"), host);
-  expect(attached).toEqual([{ kind: "shown", note: `showing proc-${slow}` }]);
+  const { host, watched } = recordingHost(pctx, { pick: null, input: null, confirm: true });
+  await present(tab.actions.find(a => a.key === "enter"), "watch").run(present(rows.find(r => r.id === slow), "row"), host);
+  expect(watched.map(w => [w.runner, w.label])).toEqual([["box", `proc-${slow}`]]);
+  expect(watched[0]?.log?.endsWith(`${slow}.log`)).toBe(true);
   expect(String(await tool.run({ action: "stop", id: slow }, ctx))).toContain(slow);
   expect(stopped).toEqual([`proc-${slow}`]);
   await saveConfig({ plugins: [], runner: "plain" });

@@ -1,7 +1,7 @@
 import type { Result } from "../../config";
 import { defineUi, type PluginContext, type PluginUi, type Tone } from "../../core/plugins";
 import { settled } from "../../core/tools/registry";
-import { getProc, listProcs, procLabel, stopProc, tail, type Proc } from "./store";
+import { getProc, listProcs, logFile, procLabel, stopProc, tail, type Proc } from "./store";
 
 const runtime = (proc: Proc): string => `${Math.round(((proc.endedAt === null ? Date.now() : Date.parse(proc.endedAt)) - Date.parse(proc.startedAt)) / 1000)}s`;
 const tone = (proc: Proc): Tone =>
@@ -37,22 +37,18 @@ const ui: PluginUi = defineUi({
       const proc = settled(await getProc(dir, row.id, ctx));
       if (proc === null) return [];
       return [
-        { title: "Process", lines: [proc.command, `${proc.state}${proc.code === null ? "" : ` (exit ${proc.code})`} · ${proc.pid === null ? `in ${proc.runner} (Enter attaches)` : `pid ${proc.pid}`} · ${runtime(proc)}`, `by ${proc.owner} in ${proc.cwd}`, `started ${proc.startedAt}`] },
+        { title: "Process", lines: [proc.command, `${proc.state}${proc.code === null ? "" : ` (exit ${proc.code})`} · ${proc.pid === null ? `in ${proc.runner} (Enter watches)` : `pid ${proc.pid}`} · ${runtime(proc)}`, `by ${proc.owner} in ${proc.cwd}`, `started ${proc.startedAt}`] },
         { title: "Output", lines: await tail(dir, proc.id, 40) },
       ];
     },
     actions: [{
-      key: "enter", label: "attach",
+      key: "enter", label: "watch",
       run: async (row, host) => {
         if (row === null) return;
-        const proc = settled(await getProc(settled(await host.data("conversation")), row.id, host));
+        const dir = settled(await host.data("conversation"));
+        const proc = settled(await getProc(dir, row.id, host));
         if (proc === null) return;
-        if (proc.pid !== null) { host.note(`${proc.id} runs without a window; pick tmux or rex with /mux for new commands`); return; }
-        const runner = await host.links.runnerNamed(proc.runner);
-        if (runner === null) { host.note(`${proc.id} runs in ${proc.runner}, which is off in this bubble`); return; }
-        const plan = await runner.attach(host.conversation, procLabel(proc.id));
-        if (!plan.ok) { host.note(plan.error); return; }
-        await host.attach(plan.data);
+        await host.watch({ title: proc.command.split("\n")[0] ?? proc.id, runner: proc.runner, label: procLabel(proc.id), log: logFile(dir, proc.id) });
       },
     }, {
       key: "s", label: "stop",

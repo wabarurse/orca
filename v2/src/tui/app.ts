@@ -12,14 +12,14 @@ import { saveImage } from "../core/images";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
-import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
+import type { Fold, Row, Section, Tab, Typed, UiHost, Watch } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
 import { chooseRunner, runnerNames, runners, stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
+import { bold, dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
@@ -86,6 +86,7 @@ export class App {
   private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
   private quitting = false;
+  private watching: { target: Watch; rows: string[]; error: string | null } | null = null;
   private noBubble = false;
   private activePlugins: string[] = [];
   private pluginsPage: { plugins: Awaited<ReturnType<typeof availablePlugins>>; enabled: string[] } | null = null;
@@ -215,6 +216,7 @@ export class App {
       tab.busy = status !== null && status.state === "turn" && await daemonPid(tab.id) !== null;
     }
     if (this.page !== null) await this.loadPage();
+    if (this.watching !== null) await this.refreshWatch();
   }
 
   private async answerConfirms(): Promise<void> {
@@ -243,7 +245,7 @@ export class App {
       pick: (title, options) => this.ask({ kind: "pick", title, options }),
       say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
       open: async path => { await this.deps.open(path); },
-      attach: async plan => { await this.attach(plan); } };
+      watch: async target => { await this.watch(target); } };
   }
 
   private async startDaemon(conversation: string): Promise<boolean> {
@@ -260,6 +262,7 @@ export class App {
 
   private async key(key: Key): Promise<void> {
     if (this.modal !== null) { this.modalKey(this.modal, key); return; }
+    if (this.watching !== null) { await this.watchKey(key); return; }
     if (this.page !== null) { await this.pageKey(key); return; }
     this.note = "";
     const id = this.conversation.id;
@@ -609,7 +612,7 @@ export class App {
     else if (tab?.id === "bubbles" && char === "d") await this.deleteChat(page.rows[page.index]);
     else if (tab?.id === "plugins" && key.name === "enter") { this.openPluginPage(page.rows[page.index]); return; }
     else if (tab?.id === "plugins" && char === "t") { await this.togglePlugin(page.rows[page.index]); return; }
-    else if (tab?.id === "agents" && key.name === "enter") { await this.attachAgent(page.rows[page.index]); }
+    else if (tab?.id === "agents" && key.name === "enter") { await this.watchAgent(page.rows[page.index]); return; }
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
     else if (tab?.plugin != null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
     else if (tab?.plugin != null) {
@@ -649,22 +652,42 @@ export class App {
     page.status = `restored ${row.name}`;
   }
 
-  private async attach(plan: Attach): Promise<void> {
-    if (plan.kind === "shown") { this.flash(plan.note); return; }
-    const code = await this.deps.terminal.handOver(plan.argv);
-    this.head = "unset";
-    this.flash(code === 0 ? "back from the window" : `the window exited ${code}`);
+  private async watch(target: Watch): Promise<void> {
+    this.watching = { target, rows: [], error: null };
+    await this.refreshWatch();
+    this.draw();
   }
 
-  private async attachAgent(row: Row | undefined): Promise<void> {
+  private async refreshWatch(): Promise<void> {
+    const w = this.watching;
+    if (w === null) return;
+    const runner = w.target.runner === "plain" ? null : (await runners(this.conversation.id)).find(r => r.name === w.target.runner) ?? null;
+    const screen = runner === null ? null : await runner.screen(this.conversation.id, w.target.label);
+    if (screen !== null && screen.ok) { w.rows = screen.data; w.error = null; return; }
+    const log = w.target.log === null ? "" : await readFile(w.target.log, "utf8").catch(() => "");
+    w.rows = log.replace(/\n+$/, "").split("\n").slice(-200);
+    w.error = screen === null ? null : screen.error;
+  }
+
+  private async watchKey(key: Key): Promise<void> {
+    const w = this.watching;
+    if (w === null) return;
+    if (key.name === "escape" || (key.name === "char" && key.text === "q")) { this.watching = null; this.draw(); return; }
+    const typed = typedFrom(key);
+    if (typed === null) return;
+    if (w.target.runner === "plain") { this.flash(`${w.target.title} runs without a terminal (plain runner); pick tmux or rex with /mux to type into new ones`); return; }
+    const runner = (await runners(this.conversation.id)).find(r => r.name === w.target.runner);
+    const sent = runner === undefined ? null : await runner.send(this.conversation.id, w.target.label, typed);
+    if (sent !== null && !sent.ok) this.flash(sent.error, true);
+    await this.refreshWatch();
+    this.draw();
+  }
+
+  private async watchAgent(row: Row | undefined): Promise<void> {
     if (row === undefined) return;
     const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
-    if (run === undefined || !live(run)) { this.flash(`${row.id} is not running`); return; }
-    const runner = (await runners(this.conversation.id)).find(r => r.name === run.runner);
-    if (runner === undefined) { this.flash(`${row.id} runs in ${run.runner}, which is off in this bubble`, true); return; }
-    const plan = await runner.attach(this.conversation.id, run.agent);
-    if (!plan.ok) { this.flash(plan.error, true); return; }
-    await this.attach(plan.data);
+    if (run === undefined) return;
+    await this.watch({ title: run.agent, runner: run.runner, label: run.agent, log: run.log });
   }
 
   private async bubbleEnter(row: Row | undefined): Promise<void> {
@@ -680,10 +703,21 @@ export class App {
 
   private draw(): void {
     const t = this.deps.terminal;
+    if (this.watching !== null) {
+      const w = this.watching;
+      const live = w.target.runner !== "plain" && w.error === null;
+      const head = bold(fit(`watching ${w.target.title}${live ? "" : " · its log (read-only)"}`, t.cols));
+      const room = Math.max(1, t.rows - 3);
+      const body = w.rows.slice(-room).map(row => fit(row, t.cols));
+      const filler = Array.from({ length: Math.max(0, room - body.length) }, () => "");
+      const status = this.note.length > 0 ? this.note : dim(live ? "keys go to it · q or esc back (it keeps running)" : `${w.error ?? "plain runner: no terminal to type into"} · q or esc back`);
+      t.show({ kind: "page", rows: [head, dim("─".repeat(t.cols)), ...body, ...filler, fit(status, t.cols)].slice(0, t.rows), cursor: 0, col: 0 });
+      return;
+    }
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "enter attach · s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
+      const actions = tab?.id === "agents" ? "enter watch · s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
@@ -724,6 +758,16 @@ export class App {
     if (modal.kind === "pick") return `${modal.title}  ↑↓ choose · enter · esc`;
     return `${modal.prompt}${modal.state.text}`;
   }
+}
+
+const TYPED_KEYS = new Set(["enter", "tab", "backspace", "delete", "up", "down", "left", "right", "home", "end", "pageup", "pagedown"]);
+
+function typedFrom(key: Key): Typed | null {
+  if ((key.name === "char" || key.name === "paste") && key.ctrl !== true && key.alt !== true) return key.text === undefined ? null : { kind: "text", text: key.text };
+  if (key.name === "tab" && key.shift === true) return { kind: "key", key: "shift+tab" };
+  if (key.ctrl === true && key.name.length === 1) return { kind: "key", key: `ctrl+${key.name}` };
+  if (key.alt === true && key.name.length === 1) return { kind: "key", key: `alt+${key.name}` };
+  return TYPED_KEYS.has(key.name) ? { kind: "key", key: key.name } : null;
 }
 
 function edit(state: editor.EditState, key: Key): editor.EditState {

@@ -19,7 +19,7 @@ import { emptyHooks, type LoopHooks } from "./hooks";
 
 const home = tempHome("loop");
 
-const runtime: Runtime = { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", show: async () => "", confirm: async () => false };
+const runtime: Runtime = { spawn: async () => { throw new Error("no"); }, agents: async () => [], stop: async () => "", confirm: async () => false };
 
 function echoTool(onRun: () => Promise<void> = async () => {}): Tool {
   return { parallel: () => false, spec: { name: "echo", description: "echo", input_schema: { type: "object", properties: { text: { type: "string" } } } },

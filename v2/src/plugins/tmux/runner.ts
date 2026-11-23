@@ -37,6 +37,18 @@ async function openWindow(launch: Launch, argv: string[]): Promise<Result<string
   return pane.startsWith("%") ? ok(pane) : fail(failed("new-window", res));
 }
 
+const TMUX_KEYS: Record<string, string> = { enter: "Enter", tab: "Tab", "shift+tab": "BTab", backspace: "BSpace", escape: "Escape", delete: "DC", up: "Up", down: "Down",
+  left: "Left", right: "Right", home: "Home", end: "End", pageup: "PPage", pagedown: "NPage", space: "Space" };
+
+export function tmuxKey(key: string): string {
+  const named = TMUX_KEYS[key];
+  if (named !== undefined) return named;
+  const ctrl = /^ctrl\+(.+)$/.exec(key)?.[1];
+  if (ctrl !== undefined) return `C-${TMUX_KEYS[ctrl] ?? ctrl}`;
+  const alt = /^alt\+(.+)$/.exec(key)?.[1];
+  return alt !== undefined ? `M-${TMUX_KEYS[alt] ?? alt}` : key;
+}
+
 export const tmuxRunner: Runner = {
   name: "tmux",
   async start(launch) {
@@ -54,12 +66,14 @@ export const tmuxRunner: Runner = {
   async stop(conversation, agent) {
     await tmux(["kill-window", "-t", `=${sessionName(conversation)}:=${agent}`]);
   },
-  async attach(conversation, label) {
-    const bin = which("tmux");
-    if (bin === null) return fail("tmux is not installed");
-    const session = sessionName(conversation);
-    const selected = await tmux(["select-window", "-t", `=${session}:=${label}`]);
-    if (!selected.ok || selected.data.code !== 0) return fail(`${label} has no tmux window (it may have ended)`);
-    return ok({ kind: "terminal", argv: [bin, ...socketArgs(), "attach-session", "-t", `=${session}`] });
+  async screen(conversation, label) {
+    const res = await tmux(["capture-pane", "-e", "-p", "-t", `=${sessionName(conversation)}:=${label}`]);
+    if (!res.ok || res.data.code !== 0) return fail(`${label} has no tmux window (it may have ended)`);
+    return ok(res.data.out.replace(/\n+$/, "").split("\n"));
+  },
+  async send(conversation, label, input) {
+    const target = `=${sessionName(conversation)}:=${label}`;
+    const res = input.kind === "text" ? await tmux(["send-keys", "-t", target, "-l", input.text]) : await tmux(["send-keys", "-t", target, tmuxKey(input.key)]);
+    return res.ok && res.data.code === 0 ? ok(null) : fail(failed("send-keys", res));
   },
 };

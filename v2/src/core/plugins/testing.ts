@@ -4,7 +4,7 @@ import { paths, type Result } from "../../config";
 import { pluginData } from "../bubbles";
 import type { Runtime, ToolContext } from "../tools/registry";
 import { linksFor } from "./context";
-import type { Attach, Links, PluginContext, UiHost } from "./types";
+import type { Links, PluginContext, UiHost, Watch } from "./types";
 
 const idleProvider: Provider = {
   name: "anthropic",
@@ -23,7 +23,6 @@ const idleRuntime: Runtime = {
   spawn: async () => { throw new Error("no spawn in plugin tests"); },
   agents: async () => [],
   stop: async () => "",
-  show: async () => "",
   confirm: async () => false,
 };
 
@@ -40,10 +39,10 @@ export function pluginContext(conversation: string, plugin: string, cwd: string,
 }
 
 export type HostAnswers = { pick: number | null; input: string | null; confirm: boolean };
-export type RecordingHost = { host: UiHost; said: string[]; notes: string[]; opened: string[]; attached: Attach[] };
+export type RecordingHost = { host: UiHost; said: string[]; notes: string[]; opened: string[]; watched: Watch[] };
 
 export function recordingHost(ctx: PluginContext, answers: HostAnswers): RecordingHost {
-  const said: string[] = [], notes: string[] = [], opened: string[] = [], attached: Attach[] = [];
+  const said: string[] = [], notes: string[] = [], opened: string[] = [], watched: Watch[] = [];
   const host: UiHost = {
     ...ctx,
     note: text => { notes.push(text); },
@@ -52,9 +51,9 @@ export function recordingHost(ctx: PluginContext, answers: HostAnswers): Recordi
     pick: async () => answers.pick,
     say: async text => { said.push(text); },
     open: async path => { opened.push(path); },
-    attach: async plan => { attached.push(plan); },
+    watch: async target => { watched.push(target); },
   };
-  return { host, said, notes, opened, attached };
+  return { host, said, notes, opened, watched };
 }
 
 export function item<T>(list: readonly T[], index: number): T {

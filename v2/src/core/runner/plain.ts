@@ -34,7 +34,10 @@ export const plainRunner: Runner = {
     if (Number.isInteger(leader) && leader > 0) terminateGroup(leader);
     if (run.pid !== null && run.pid !== leader) terminateGroup(run.pid);
   },
-  async attach() {
-    return fail("the plain runner runs things without a window; pick tmux or rex with /mux to attach to new agents and commands");
+  async screen() {
+    return fail("the plain runner keeps no terminal; its output is in the log");
+  },
+  async send() {
+    return fail("the plain runner keeps no terminal to type into; pick tmux or rex with /mux for new agents and commands");
   },
 };

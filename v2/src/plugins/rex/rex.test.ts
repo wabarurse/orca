@@ -101,7 +101,7 @@ test("the plugin declares its global marker and has no UI of its own", () => {
   expect(plugin.storage.map(s => s.scope)).toEqual(["global"]);
 });
 
-test("when orca2 itself runs in Rex, agents start hidden in its session; attach opens one in its own tab and again hides it; stop closes only that block", async () => {
+test("when orca2 itself runs in Rex, agents start hidden in its session; orca2 reads its screen and types into it without opening a tab; stop closes only that block", async () => {
   const mine = "session:mine";
   mkdirSync(paths.conversation("c1"), { recursive: true });
   writeFileSync(join(paths.conversation("c1"), "viewer.json"), JSON.stringify({ pid: process.pid, rexSession: mine, rexBlock: "block:orca" }));
@@ -118,16 +118,13 @@ test("when orca2 itself runs in Rex, agents start hidden in its session; attach 
   writeFileSync(join(fake, "blocks.json"), JSON.stringify(hidden));
   for (const b of ["block:orca", "block:w", "block:o"]) json("process", b, running);
   expect(await runner.alive("c1")).toEqual(["worker-a"]);
-  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is open in its own Rex tab (open it again here to hide it; closing the tab stops it)" } });
-  expect(log().slice(-3)).toEqual([
-    `--autostart=false api call session.move_block {"session_id":"${mine}","block_id":"block:w","anchor_block_id":"block:holder","direction":"horizontal","side":"after"}`,
-    "--autostart=false block close block:holder", `--autostart=false focus -s ${mine} window:holder`]);
-
-  writeFileSync(join(fake, "blocks.json"), JSON.stringify({ blocks: [{ block_id: "block:w", label: "worker-a@c1", window_id: "window:holder" }] }));
-  expect(await runner.alive("c1")).toEqual(["worker-a"]);
-  expect(await runner.attach("c1", "worker-a")).toEqual({ ok: true, data: { kind: "shown", note: "worker-a is hidden again and keeps running" } });
-  expect(log().at(-1)).toBe(`--autostart=false api call session.detach_block {"session_id":"${mine}","block_id":"block:w"}`);
-
+  expect(await runner.screen("c1", "worker-a")).toEqual({ ok: true, data: [""] });
+  expect(log().at(-1)).toBe(`--autostart=false capture -s ${mine} -b block:w --format vt --trim`);
+  expect(await runner.send("c1", "worker-a", { kind: "text", text: "yes" })).toEqual({ ok: true, data: null });
+  expect(log().at(-1)).toBe(`--autostart=false send -s ${mine} -b block:w yes`);
+  await runner.send("c1", "worker-a", { kind: "key", key: "ctrl+c" });
+  expect(log().at(-1)).toBe(`--autostart=false send-key -s ${mine} -b block:w ctrl+c`);
+  expect(log().some(line => line.includes("window new") || line.includes("move_block"))).toBe(false);
   await runner.stop("c1", "worker-a");
   expect(log()).toContain("--autostart=false block close block:w");
   expect(log().some(line => line.includes("window close"))).toBe(false);

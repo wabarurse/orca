@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { fail, ok, parseJson, paths, type Result } from "../../config";
-import { exec, launchCommand, readViewer, which, type Attach, type Launch, type Runner, type Viewer } from "../../core/plugins";
+import { exec, launchCommand, readViewer, which, type Launch, type Runner, type Viewer } from "../../core/plugins";
 import { settled } from "../../core/tools/registry";
 
 const APP_CLI = "/Applications/Rex.app/Contents/Helpers/Rex Server.rex/Contents/MacOS/rex";
@@ -52,7 +52,6 @@ const WindowsSchema = z.looseObject({ windows: z.array(z.looseObject({
 })) });
 const ProcessSchema = z.looseObject({ child: z.unknown() });
 const CreatedSchema = z.looseObject({ session_id: z.string() });
-const ClientsSchema = z.looseObject({ clients: z.array(z.looseObject({ client_id: z.string(), info: z.looseObject({ kind: z.string() }).nullish() })) });
 const RunSchema = z.looseObject({ window_id: z.string().nullish(), block_ids: z.array(z.string()).nullish() });
 
 type Block = { id: string; label: string; window: string; windowLabel: string; live: boolean };
@@ -158,30 +157,6 @@ async function findAgent(conversation: string, agent: string): Promise<Found | n
   return block === undefined ? null : { session: sid.id, block, shared: false };
 }
 
-async function showInApp(session: string): Promise<void> {
-  const clients = await rex(["client", "ls", "--json"]);
-  const app = clients.ok ? parse(clients.out, ClientsSchema)?.clients.find(c => c.info?.kind === "app") : undefined;
-  if (app !== undefined) await rex(["-C", app.client_id, "do", "session.select", `session_id=${session}`]);
-  if (process.platform === "darwin") await exec(["/usr/bin/open", "-a", "Rex"]);
-}
-
-async function toggleTab(agent: string, found: Found): Promise<Result<Attach>> {
-  if (found.block.window !== "") {
-    const hidden = await api("session.detach_block", { session_id: found.session, block_id: found.block.id });
-    return hidden.ok ? ok({ kind: "shown", note: `${agent} is hidden again and keeps running` }) : fail(`could not hide ${agent}: ${hidden.err}`);
-  }
-  const made = await rex(["window", "new", "-s", found.session, agent, "--keep-open", "--json", "--", "/bin/sh", "-c", "sleep 600"]);
-  const opened = made.ok ? parse(made.out, RunSchema) : null;
-  const holder = opened?.block_ids?.[0] ?? null;
-  if (holder === null) return fail(`could not open a tab for ${agent}: ${made.ok ? "unexpected output" : made.err}`);
-  const placed = await api("session.move_block", { session_id: found.session, block_id: found.block.id, anchor_block_id: holder, direction: "horizontal", side: "after" });
-  await rex(["block", "close", holder]);
-  if (!placed.ok) return fail(`could not open ${agent}: ${placed.err}`);
-  const window = opened?.window_id;
-  if (typeof window === "string") await rex(["focus", "-s", found.session, window]);
-  return ok({ kind: "shown", note: `${agent} is open in its own Rex tab (open it again here to hide it; closing the tab stops it)` });
-}
-
 export const rexRunner: Runner = {
   name: "rex",
   async start(launch) {
@@ -211,18 +186,18 @@ export const rexRunner: Runner = {
     }
     return [...names];
   },
-  async attach(conversation, label) {
+  async screen(conversation, label) {
     if (rexBinary() === null) return fail("Rex is not installed");
     const found = await findAgent(conversation, label);
-    if (found === null) return fail(`${label} has no Rex window (it may have ended)`);
-    if (found.block.label === sharedLabel(conversation, label)) {
-      const toggled = await toggleTab(label, found);
-      if (toggled.ok && !found.shared && found.block.window === "") await showInApp(found.session);
-      return toggled;
-    }
-    await rex(["focus", "-s", found.session, found.block.window]);
-    await showInApp(found.session);
-    return ok({ kind: "shown", note: `showing ${label} in Rex` });
+    if (found === null) return fail(`${label} has no Rex block (it may have ended)`);
+    const res = await rex(["capture", "-s", found.session, "-b", found.block.id, "--format", "vt", "--trim"]);
+    return res.ok ? ok(res.out.replaceAll("\r", "").replace(/\n+$/, "").split("\n")) : fail(`could not read ${label}: ${res.err}`);
+  },
+  async send(conversation, label, input) {
+    const found = await findAgent(conversation, label);
+    if (found === null) return fail(`${label} has no Rex block (it may have ended)`);
+    const res = input.kind === "text" ? await rex(["send", "-s", found.session, "-b", found.block.id, input.text]) : await rex(["send-key", "-s", found.session, "-b", found.block.id, input.key]);
+    return res.ok ? ok(null) : fail(`could not type into ${label}: ${res.err}`);
   },
   async stop(conversation, agent) {
     if (!rexUsed()) return;

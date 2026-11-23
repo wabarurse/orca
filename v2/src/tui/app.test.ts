@@ -8,7 +8,8 @@ import { writeStatus } from "../core/daemon/channel";
 import { ensureBubble, readBubble, setBubbleDirectory } from "../core/bubbles";
 import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
-import { registerBuiltins } from "../core/plugins";
+import { defineBackground, definePlugin, noHooks, registerBuiltins, type Runner } from "../core/plugins";
+import { newRun, writeRun } from "../core/runner/runs";
 import { setTrust } from "../core/trust";
 import { BUILTINS } from "../plugins";
 import { tempHome } from "../test/home";
@@ -20,10 +21,9 @@ const home = tempHome("tui");
 function fakeTerminal() {
   const keys: ((key: Key) => void)[] = [];
   const acts: ((action: screens.ScreenAction) => void)[] = [];
-  const handed: string[][] = [];
   const state: { screen: screens.Screen | null } = { screen: null };
   const terminal: Terminal = { cols: 100, rows: 30, write() {}, onKey: cb => { keys.push(cb); }, onResize() {}, open() {}, close() {}, eraseOnExit() {},
-    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "", handOver: async argv => { handed.push(argv); return 0; } };
+    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "" };
   const press = async (...list: Key[]): Promise<void> => { for (const key of list) { for (const cb of keys) cb(key); await Bun.sleep(20); } };
   const type = async (text: string): Promise<void> => { await press(...[...text].map(ch => ({ name: "char", text: ch }))); };
   const text = (): string => {
@@ -364,6 +364,36 @@ describe("tui", () => {
     await t.press({ name: "escape" });
     const after = t.screen();
     expect(after?.kind === "chat" ? Bun.stripANSI(after.footer.join("\n")) : "").toContain("0 plugins · Ctrl+P");
+    await saveConfig({ plugins: [] });
+    t.app.stop();
+  });
+
+  test("Enter on an agent watches its terminal in place (no tab): keys go to it, q comes back and it keeps running", async () => {
+    const sent: string[] = [];
+    const box: Runner = { name: "box", start: async () => ({ handle: "box", pid: null }), alive: async () => ["worker-x"], stop: async () => undefined,
+      screen: async (_c, label) => ({ ok: true, data: [`${label} is working`, "\x1b[31mred line\x1b[0m"] }),
+      send: async (_c, _l, input) => { sent.push(input.kind === "text" ? `text:${input.text}` : `key:${input.key}`); return { ok: true, data: null }; } };
+    registerBuiltins([...BUILTINS, { name: "box", dir: mkdtempSync(join(tmpdir(), "orca2-box-")), ui: null,
+      index: async () => ({ default: definePlugin({ name: "box", description: "box", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), guard: [], bundles: [], retention: [],
+        provides: [], uses: [], emits: [], on: [], ui: null, background: "./background.ts" }) }),
+      background: async () => ({ default: defineBackground({ watchers: [], memory: null, runner: box, stop: null, remove: null }) }) }]);
+    await saveConfig({ plugins: ["box"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-watch-")));
+    const id = t.app.conversationId();
+    const run = newRun({ conversation: id, agent: "worker-x", role: "worker", bundle: "worker", branch: "x", runner: "box" });
+    await writeRun({ ...run, state: "running", pid: process.pid });
+    await t.press({ name: "a", ctrl: true });
+    expect(await t.shows("worker-x")).toContain("worker-x");
+    for (let i = 0; i < 5 && !t.text().split("\n").some(line => line.startsWith("› ") && line.includes("worker-x")); i++) await t.press({ name: "char", text: "j" });
+    await t.press({ name: "enter" });
+    expect(await t.shows("watching worker-x")).toContain("worker-x is working");
+    expect(t.text()).toContain("red line");
+    expect(t.text()).toContain("keys go to it · q or esc back");
+    await t.press({ name: "char", text: "y" }, { name: "enter" }, { name: "c", ctrl: true });
+    expect(sent).toEqual(["text:y", "key:enter", "key:ctrl+c"]);
+    await t.press({ name: "char", text: "q" });
+    expect(t.text()).toContain("[Agents]");
+    expect(sent.length).toBe(3);
     await saveConfig({ plugins: [] });
     t.app.stop();
   });

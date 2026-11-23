@@ -112,7 +112,7 @@ export type UiHost = PluginContext & {
   pick: (title: string, options: string[]) => Promise<number | null>;
   say: (text: string) => Promise<void>;
   open: (path: string) => Promise<void>;
-  attach: (attach: Attach) => Promise<void>;
+  watch: (target: Watch) => Promise<void>;
 };
 
 export type TabAction = { key: string; label: string; run: (row: Row | null, host: UiHost) => Promise<void> };
@@ -149,9 +149,11 @@ export type Runner = {
   start: (launch: Launch) => Promise<{ handle: string; pid: number | null }>;
   alive: (conversation: string) => Promise<string[] | null>;
   stop: (conversation: string, agent: string) => Promise<void>;
-  attach: (conversation: string, label: string) => Promise<Result<Attach>>;
+  screen: (conversation: string, label: string) => Promise<Result<string[]>>;
+  send: (conversation: string, label: string, input: Typed) => Promise<Result<null>>;
 };
-export type Attach = { kind: "shown"; note: string } | { kind: "terminal"; argv: string[] };
+export type Typed = { kind: "text"; text: string } | { kind: "key"; key: string };
+export type Watch = { title: string; runner: string; label: string; log: string | null };
 export type BackgroundHook = (ctx: BackgroundContext) => Promise<void>;
 export type PluginMemory = { title: string; text: (ctx: BackgroundContext) => Promise<string> };
 

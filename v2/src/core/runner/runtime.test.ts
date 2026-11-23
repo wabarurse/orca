@@ -12,7 +12,7 @@ import { readRun, updateRun } from "./runs";
 
 const home = tempHome("runtime");
 
-const fakeRunner = (name: string): Runner => ({ name, start: async () => ({ handle: name, pid: null }), alive: async () => [], stop: async () => undefined, attach: async () => ({ ok: false, error: "fake" }) });
+const fakeRunner = (name: string): Runner => ({ name, start: async () => ({ handle: name, pid: null }), alive: async () => [], stop: async () => undefined, screen: async () => ({ ok: true, data: [] }), send: async () => ({ ok: true, data: null }) });
 
 function register(names: string[]): void {
   registerBuiltins(names.map(name => ({
@@ -54,10 +54,9 @@ test("the launch command keeps the environment out of argv in a private file tha
   expect(existsSync(file)).toBe(false);
 });
 
-test("the orchestrator can start an agent in a named runner without /mux, is refused one that is off, and show opens its window", async () => {
-  const opened: string[] = [];
+test("the orchestrator can start an agent in a named runner without /mux and is refused one that is off", async () => {
   const box: Runner = { name: "box", start: async () => ({ handle: "box", pid: null }), alive: async () => [], stop: async () => undefined,
-    attach: async (_c, label) => { opened.push(label); return { ok: true, data: { kind: "shown", note: `${label} is open beside orca2` } }; } };
+    screen: async () => ({ ok: true, data: [] }), send: async () => ({ ok: true, data: null }) };
   registerBuiltins([{ name: "box", dir: join(home.path(), "box"), ui: null,
     index: async () => ({ default: definePlugin({ name: "box", description: "box", tools: [], prompt: [], skills: [], storage: [], hooks: noHooks(), bundles: [], guard: [], retention: [],
       provides: [], uses: [], emits: [], on: [], ui: null, background: "./background.ts" }) }),
@@ -71,7 +70,5 @@ test("the orchestrator can start an agent in a named runner without /mux, is ref
   expect((await loadConfig()).runner).toBe("plain");
   await updateRun(c.id, info.agent, { state: "running", pid: process.pid });
   expect((await readRun(c.id, info.agent))?.runner).toBe("box");
-  expect(await runtime.show(info.agent)).toBe(`${info.agent} is open beside orca2`);
-  expect(opened).toEqual([info.agent]);
   await saveConfig({ plugins: [] });
 });

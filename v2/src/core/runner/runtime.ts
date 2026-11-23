@@ -80,17 +80,6 @@ export async function stopAgent(conversation: string, agent: string): Promise<st
   return `stopped ${agent}`;
 }
 
-export async function showAgent(conversation: string, agent: string): Promise<string> {
-  const run = await readRun(conversation, agent);
-  if (run === null) return `no agent ${agent}`;
-  if (!live(run)) return `${agent} is not running (${run.state})`;
-  const runner = (await runners(conversation)).find(r => r.name === run.runner);
-  if (runner === undefined) return `${agent} runs in ${run.runner}, which is off in this bubble`;
-  const plan = await runner.attach(conversation, agent);
-  if (!plan.ok) return plan.error;
-  return plan.data.kind === "shown" ? plan.data.note : `${agent} runs in ${run.runner}; the user attaches with Enter on its Agents row`;
-}
-
 export function runtimeFor(conversation: string, self: string, confirm: (question: string) => Promise<boolean>): Runtime {
   return {
     async spawn(request: SpawnRequest): Promise<AgentInfo> {
@@ -119,7 +108,6 @@ export function runtimeFor(conversation: string, self: string, confirm: (questio
       return (await listRuns(conversation)).filter(run => run.agent !== "orchestrator").map(run => ({ ...toInfo(run), state: run.state === "running" && !live(run) ? "exited" : run.state }));
     },
     stop: agent => stopAgent(conversation, agent),
-    show: agent => showAgent(conversation, agent),
     confirm,
   };
 }
