@@ -57,7 +57,12 @@ export function bubbleDetails(found: { entries: BubbleEntry[]; loose: Conversati
   return [];
 }
 
-export async function bubbleChoices(directory: string): Promise<{ options: string[]; ids: (string | null)[] }> {
+export type BubbleChoice = { kind: "new" } | { kind: "join"; id: string } | { kind: "none" };
+
+export async function bubbleChoices(directory: string): Promise<{ options: string[]; choices: BubbleChoice[] }> {
   const { entries } = await bubbleEntries(directory);
-  return { options: ["New bubble", ...entries.map(e => `${e.bubble.name} · ${e.nodes} nodes · ${e.conversations.length} chats`)], ids: [null, ...entries.map(e => e.bubble.id)] };
+  return {
+    options: ["New bubble", ...entries.map(e => `${e.bubble.name} · ${e.nodes} nodes · ${e.conversations.length} chats`), "No bubble (no shared memory)"],
+    choices: [{ kind: "new" }, ...entries.map((e): BubbleChoice => ({ kind: "join", id: e.bubble.id })), { kind: "none" }],
+  };
 }

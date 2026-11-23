@@ -7,13 +7,14 @@ export type Conversation = {
   name: string;
   directory: string;
   bubble: string | null;
+  noBubble: boolean;
   model: string | null;
   createdAt: string;
 };
 
 const ID = /^c-[a-f0-9]{8}$/;
 
-const ConversationFile = z.object({ name: z.string(), directory: z.string(), createdAt: z.string(), bubble: z.unknown(), model: z.unknown() });
+const ConversationFile = z.object({ name: z.string(), directory: z.string(), createdAt: z.string(), bubble: z.unknown(), noBubble: z.boolean().default(false), model: z.unknown() });
 
 export function validId(id: string): boolean {
   return ID.test(id);
@@ -33,7 +34,7 @@ export async function readConversation(id: string): Promise<Conversation | null>
   try { json = JSON.parse(await file.text()); } catch { return null; }
   const raw = ConversationFile.safeParse(json);
   if (!raw.success) return null;
-  return { id, name: raw.data.name, directory: raw.data.directory, bubble: typeof raw.data.bubble === "string" ? raw.data.bubble : null,
+  return { id, name: raw.data.name, directory: raw.data.directory, bubble: typeof raw.data.bubble === "string" ? raw.data.bubble : null, noBubble: raw.data.noBubble,
     model: typeof raw.data.model === "string" ? raw.data.model : null, createdAt: raw.data.createdAt };
 }
 
@@ -44,7 +45,7 @@ export async function saveConversation(conversation: Conversation): Promise<void
 
 export async function createConversation(directory: string, name: string | null): Promise<Conversation> {
   const id = `c-${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
-  const conversation: Conversation = { id, name: name ?? id, directory, bubble: null, model: null, createdAt: new Date().toISOString() };
+  const conversation: Conversation = { id, name: name ?? id, directory, bubble: null, noBubble: false, model: null, createdAt: new Date().toISOString() };
   await saveConversation(conversation);
   return conversation;
 }

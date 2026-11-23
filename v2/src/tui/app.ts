@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
@@ -11,14 +12,14 @@ import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Fold, Row, Section, UiHost } from "../core/plugins/types";
-import { bubblesFor, ensureBubble, joinBubble, readBubble, setBubblePlugin } from "../core/bubbles";
+import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
 import { stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
-import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget } from "./bubbles";
+import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
@@ -82,6 +83,7 @@ export class App {
   private frame: ReturnType<typeof setInterval> | null = null;
   private lastSlow = 0;
   private quitting = false;
+  private noBubble = false;
   private openTabs: { id: string; name: string; busy: boolean }[] = [];
   private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
 
@@ -127,6 +129,9 @@ export class App {
   }
 
   private async switchTo(conversation: Conversation): Promise<void> {
+    this.lastSlow = Number.NEGATIVE_INFINITY;
+    this.noBubble = conversation.noBubble;
+    this.bubbleName = null;
     const known = this.openTabs.find(tab => tab.id === conversation.id);
     if (known === undefined) this.openTabs.push({ id: conversation.id, name: conversation.name, busy: false });
     else known.name = conversation.name;
@@ -194,7 +199,8 @@ export class App {
     const config = await loadConfig();
     const meta = await readConversation(id);
     this.model = meta?.model ?? config.model;
-    this.bubbleName = meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    this.bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    this.noBubble = meta?.noBubble === true;
     this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
     for (const tab of this.openTabs) {
       if (tab.id === id) { tab.busy = this.busy; continue; }
@@ -360,33 +366,36 @@ export class App {
   }
 
   private async newConversation(bubble: string | null = null): Promise<void> {
-    let chosen = bubble;
-    if (chosen === null) {
-      const choices = await bubbleChoices(this.deps.directory);
-      if (choices.ids.length > 1) {
-        const pick = await this.ask({ kind: "pick", title: "bubble for the new chat", options: choices.options });
-        if (pick === null) return;
-        chosen = choices.ids[pick] ?? null;
-      }
-    }
+    const choice = bubble !== null ? { kind: "join" as const, id: bubble } : await this.chooseBubble("bubble for the new chat");
+    if (choice === null) return;
     const created = await createConversation(this.deps.directory, null);
-    if (chosen !== null) {
-      const joined = await joinBubble(created.id, chosen);
-      if (!joined.ok) { this.flash(joined.error, true); return; }
-    }
+    const applied = await this.applyBubble(created.id, choice);
+    if (!applied) return;
     this.page = null;
     await this.switchTo((await readConversation(created.id)) ?? created);
   }
 
+  private async chooseBubble(title: string): Promise<BubbleChoice | null> {
+    const { options, choices } = await bubbleChoices(this.deps.directory);
+    const pick = await this.ask({ kind: "pick", title, options });
+    return pick === null ? null : choices[pick] ?? null;
+  }
+
+  private async applyBubble(conversation: string, choice: BubbleChoice): Promise<boolean> {
+    if (choice.kind === "none") { const left = await leaveBubbles(conversation); if (!left.ok) this.flash(left.error, true); return left.ok; }
+    if (choice.kind === "join") { const joined = await joinBubble(conversation, choice.id); if (!joined.ok) this.flash(joined.error, true); return joined.ok; }
+    const name = await this.ask({ kind: "input", prompt: "name the new bubble: ", initial: basename(this.deps.directory) });
+    if (name === null) return false;
+    const made = await createBubble(conversation, name);
+    if (!made.ok) this.flash(made.error, true); else this.flash(`new bubble ${made.data.name}`);
+    return made.ok;
+  }
+
   private async offerBubble(): Promise<void> {
-    const choices = await bubbleChoices(this.deps.directory);
-    if (choices.ids.length < 2) return;
-    const pick = await this.ask({ kind: "pick", title: "bubble for this chat", options: choices.options });
-    const chosen = pick === null ? null : choices.ids[pick] ?? null;
-    if (chosen === null) return;
+    const choice = await this.chooseBubble("bubble for this chat");
+    if (choice === null) return;
     const id = this.conversation.id;
-    const joined = await joinBubble(id, chosen);
-    if (!joined.ok) { this.flash(joined.error, true); return; }
+    if (!await this.applyBubble(id, choice)) return;
     const conversation = await readConversation(id);
     if (conversation !== null && this.conversation.id === id) await this.switchTo(conversation);
     this.lastSlow = Number.NEGATIVE_INFINITY;
@@ -636,7 +645,7 @@ export class App {
     cursor = { row: footer.length + box.row, col: box.col };
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
-    const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
+    const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
