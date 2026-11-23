@@ -7,7 +7,7 @@ import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
 import type { GuardInput } from "../tools/bash/guard";
-import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi } from "./types";
+import type { AfterTool, BeforeRequest, BeforeTool, OnInput, Plugin, PluginBackground, PluginUi, Retention } from "./types";
 
 export type PluginSource = "builtin" | "user" | "repo";
 
@@ -64,6 +64,8 @@ const PluginRecord = z.object({
   guard: z.array(z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), group: z.enum(["efficiency", "security"]), test: fn<(call: GuardInput) => boolean>(),
     reason: z.string().min(1), suggest: fn<(call: GuardInput) => string>() })).default([]),
   bundles: z.array(z.object({ name: z.string(), role: RoleName, prompt: z.string(), plugins: z.array(z.string()) })),
+  retention: z.array(z.object({ tab: z.string().min(1), archiveAfterDays: z.number().positive().nullable(), purgeAfterDays: z.number().positive(),
+    settled: fn<Retention["settled"]>(), locate: fn<Retention["locate"]>(), purge: fn<Retention["purge"]>() })).default([]),
   ui: z.string().nullable(), background: z.string().nullable(),
 });
 const UiShape = z.object({ tabs: z.array(z.unknown()), counts: z.array(z.unknown()), commands: z.array(z.unknown()), toolLines: z.record(z.string(), z.unknown()), folds: z.record(z.string(), z.unknown()) });

@@ -23,6 +23,7 @@ const plugin: Plugin = {
   storage: [],
   hooks: { beforeTool: [], afterTool: [], beforeRequest: [], onInput: [] },
   guard: [],
+  retention: [],
   bundles: [],
   ui: null,
   background: null,

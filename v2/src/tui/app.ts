@@ -19,6 +19,8 @@ import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { dim, editor, fit, noColour, pastel, readClipboardImage, screens, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget } from "./bubbles";
+import { archivedSection, isHeading, shelved } from "./archive";
+import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
@@ -28,7 +30,7 @@ type Modal =
   | { kind: "input"; prompt: string; state: editor.EditState; resolve: (text: string | null) => void }
   | { kind: "pick"; title: string; options: string[]; index: number; resolve: (index: number | null) => void };
 
-type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string };
+type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string; archiveOpen: boolean };
 
 export type AppDeps = {
   terminal: Terminal;
@@ -480,7 +482,7 @@ export class App {
   }
 
   private async openPage(tab: number): Promise<void> {
-    this.page = { tab, index: 0, detailTop: 0, rows: [], details: [], error: null, status: "" };
+    this.page = { tab, index: 0, detailTop: 0, rows: [], details: [], error: null, status: "", archiveOpen: false };
     await this.loadPage();
     this.draw();
   }
@@ -500,7 +502,8 @@ export class App {
           tone: live(r) ? "good" : r.state === "failed" ? "bad" : "dim" }));
       } else {
         const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
-        page.rows = def === undefined ? [] : await def.rows(tab.plugin.ctx);
+        const rows = def === undefined ? [] : await def.rows(tab.plugin.ctx);
+        page.rows = shelved(rows, await shelfEntry(this.conversation.id, shelfKey(tab.plugin.name, tab.id)), page.archiveOpen);
       }
       page.index = Math.min(page.index, Math.max(0, page.rows.length - 1));
       page.error = null;
@@ -510,7 +513,11 @@ export class App {
   }
 
   private async details(tab: ReturnType<App["tabs"]>[number], row: Row): Promise<Section[]> {
-    if (tab.plugin !== null) return tab.plugin.ui.tabs.find(t => t.id === tab.id)?.details(row, tab.plugin.ctx) ?? [];
+    if (tab.plugin !== null) {
+      if (isHeading(row)) return [];
+      const own = await tab.plugin.ui.tabs.find(t => t.id === tab.id)?.details(row, tab.plugin.ctx) ?? [];
+      return [...archivedSection(await shelfEntry(this.conversation.id, shelfKey(tab.plugin.name, tab.id)), row), ...own];
+    }
     if (tab.id === "bubbles") return bubbleDetails(this.bubbles, row);
     const run = (await listRuns(this.conversation.id)).find(r => r.agent === row.id);
     if (run === undefined) return [];
@@ -537,15 +544,42 @@ export class App {
     else if (tab?.id === "bubbles" && (key.name === "enter" || char === "n")) { await this.bubbleEnter(page.rows[page.index]); return; }
     else if (tab?.id === "bubbles" && char === "d") await this.deleteChat(page.rows[page.index]);
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
+    else if (tab?.plugin != null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
     else if (tab?.plugin != null) {
       const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
-      const action = def?.actions.find(a => a.key === char);
+      const pressed = key.name === "enter" ? "enter" : char;
+      const action = isHeading(page.rows[page.index]) ? undefined : def?.actions.find(a => a.key === pressed);
       if (action !== undefined) {
         try { await action.run(page.rows[page.index] ?? null, this.host(tab.plugin)); } catch (error) { page.status = `${action.label}: ${errorMessage(error)}`; }
       }
     }
     await this.loadPage();
     this.draw();
+  }
+
+  private async shelve(plugin: BoundUi, tabId: string, page: Page, char: string): Promise<void> {
+    const key = shelfKey(plugin.name, tabId), id = this.conversation.id, now = new Date().toISOString();
+    const row = page.rows[page.index];
+    const entry = await shelfEntry(id, key);
+    if (char === "") { page.archiveOpen = !page.archiveOpen; return; }
+    if (char === "A") {
+      const active = page.rows.filter(r => !isHeading(r) && entry.archived[r.id] === undefined);
+      if (active.length === 0) { page.status = "nothing to archive"; return; }
+      if (!await this.ask({ kind: "confirm", question: `archive all ${active.length} on this tab? (u restores)` })) return;
+      await archiveItems(id, key, active.map(r => r.id), now);
+      page.status = `archived ${active.length}`;
+      return;
+    }
+    if (row === undefined || isHeading(row)) return;
+    if (char === "a") {
+      if (entry.archived[row.id] !== undefined) { page.status = `${row.name} is already archived; u restores it`; return; }
+      await archiveItems(id, key, [row.id], now);
+      page.status = `archived ${row.name}`;
+      return;
+    }
+    if (entry.archived[row.id] === undefined) { page.status = `${row.name} is not archived`; return; }
+    await restoreItems(id, key, [row.id], now);
+    page.status = `restored ${row.name}`;
   }
 
   private async bubbleEnter(row: Row | undefined): Promise<void> {
@@ -564,7 +598,7 @@ export class App {
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`).join(" · ") ?? "";
+      const actions = tab?.id === "agents" ? "s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,

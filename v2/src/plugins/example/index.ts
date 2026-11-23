@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { definePlugin, type Plugin } from "../../core/plugins";
-import { readPins, writePins } from "./store";
+import { readPins, shownPins, writePins } from "./store";
 
 const MAX = 200;
 
@@ -54,6 +54,18 @@ const plugin: Plugin = definePlugin({
     suggest: () => "pin with action list",
   }],
   bundles: [],
+  retention: [{
+    tab: "pins",
+    archiveAfterDays: null,
+    purgeAfterDays: 30,
+    settled: async () => [],
+    locate: async () => null,
+    purge: async (ids, ctx) => {
+      const folder = await ctx.data("conversation");
+      if (!folder.ok) return;
+      await writePins(folder.data, (await shownPins(folder)).filter(p => !ids.includes(p.id)));
+    },
+  }],
   ui: "./ui.ts",
   background: "./background.ts",
 });
