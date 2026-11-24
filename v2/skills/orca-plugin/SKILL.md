@@ -6,8 +6,7 @@ description: How to write, check and hand over an orca2 plugin (tools, prompt, s
 
 A plugin is a folder. orca2 loads it into agents (tools, prompt lines, hooks, bundles), into the TUI (tabs, counts,
 commands, tool lines, folds) and into the daemon (watchers, a memory section, a runner). It runs with the user's
-permissions, so the user approves every plugin they did not write before it is enabled. You never enable a plugin
-yourself.
+permissions, and approval is recorded for an exact version. When the user asks you to install or update a plugin, use the CLI.
 
 ## The loop
 
@@ -17,12 +16,15 @@ yourself.
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
-4. Report to the orchestrator: what the plugin adds, the check output, and the command the user runs:
-   `orca2 plugin enable <name> --from <folder>`. That command shows the user what the plugin adds and asks.
+4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. An agent defaults to its own bubble, including from a worker worktree. Use `--global` only for a requested global change. Verify with `orca2 plugin list --json`. Use `show` to inspect a plugin, `disable` to turn it off, and `inherit` to restore the bubble’s default. Group installed plugins in one enable command to approve them together.
 
 Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
 are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
 lowercase letters, digits and underscores, unique across enabled plugins.
+
+## Configuration
+
+Use `orca2 plugin config <name>` to read the effective settings. Use `--set <key> <JSON>` or `--unset <key>` to change a setting the plugin supports. The CLI combines global settings with bubble overrides. Plugin code can read `.orca-settings.json` from its global and bubble data folders in that order. Document the keys your plugin consumes.
 
 ## Folder
 
@@ -285,4 +287,4 @@ do nothing, fix the code instead.
 - A changing tool description or prompt line (date, counter): it breaks the prompt cache.
 - Writing outside `$ORCA_DATA` or the agent's `cwd`; reading other conversations' data.
 - A watcher that notifies on every poll; a count that runs a network call.
-- Enabling the plugin yourself or asking the user to approve without showing `plugin check` output.
+- Enabling plugins the user did not request or reporting success without checking the effective scope.

@@ -1,10 +1,13 @@
+import { pluginSettings, setPluginSetting } from "../core/plugins/settings";
 import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join, resolve } from "node:path";
-import { loadConfig, ok, paths, saveConfig, type Result } from "../config";
-import { ensureBubble, setBubblePlugin } from "../core/bubbles";
-import { conversationFor } from "../core/conversations";
+import { basename, join, resolve, sep } from "node:path";
+import { fail, loadConfig, ok, parseJson, paths, saveConfig, type Result } from "../config";
+import { ensureBubble, readBubble, setBubblePlugin, type Bubble } from "../core/bubbles";
+import { withStorageLock } from "../core/lock";
+import { trustState } from "../core/trust";
+import { conversationFor, listConversations, readConversation } from "../core/conversations";
 import { availablePlugins, builtinPlugins, loadForCheck, pluginHash, type LoadedPlugin } from "../core/plugins";
 import { pluginTemplate } from "./template";
 
@@ -111,89 +114,274 @@ export async function checkPlugin(args: string[], out: Out): Promise<number> {
   return failures === 0 ? 0 : 1;
 }
 
-async function scopeBubble(args: string[]): Promise<Result<string | null>> {
-  if (!args.includes("--bubble")) return ok(null);
-  const given = option(args, "--bubble");
-  if (given !== null && given.startsWith("bubble-")) return ok(given);
-  const bubble = await ensureBubble((await conversationFor(process.cwd())).id);
-  return bubble.ok ? ok(bubble.data.id) : bubble;
+type Scope = { bubble: Bubble | null; directory: string };
+
+async function pluginScope(args: string[], readOnly: boolean): Promise<Result<Scope>> {
+  const cwd = process.cwd(),
+    at = args.indexOf("--bubble"),
+    global = args.includes("--global");
+  if (at >= 0 && global) return fail("choose one scope: --global or --bubble [id]");
+  if (global || (at < 0 && process.env.ORCA_CONVERSATION === undefined)) return ok({ bubble: null, directory: cwd });
+  const given = at < 0 ? undefined : args[at + 1];
+  if (given !== undefined && !given.startsWith("--")) {
+    const bubble = await readBubble(given);
+    return bubble === null ? fail(`unknown bubble ${given}`) : ok({ bubble, directory: bubble.directory ?? cwd });
+  }
+  const current = process.env.ORCA_CONVERSATION;
+  const matches = current === undefined ? (await listConversations()).filter((c) => c.directory === cwd) : [];
+  if (current === undefined && new Set(matches.map((c) => c.bubble ?? c.id)).size > 1)
+    return fail("multiple bubbles or chats use this directory; pass --bubble <id> from orca2 bubbles");
+  const conversation =
+    current === undefined ? (matches[0] ?? (readOnly ? null : await conversationFor(cwd))) : await readConversation(current);
+  if (current === undefined && conversation === null && readOnly) return ok({ bubble: null, directory: cwd });
+  if (conversation === null) return fail(`unknown conversation ${current}`);
+  if (readOnly) {
+    const bubble = conversation.bubble === null ? null : await readBubble(conversation.bubble);
+    return ok({ bubble, directory: conversation.directory });
+  }
+  const bubble = await ensureBubble(conversation.id);
+  return bubble.ok ? ok({ bubble: bubble.data, directory: conversation.directory }) : bubble;
 }
 
-async function switchBubblePlugin(args: string[], name: string, state: "on" | "off", out: Out): Promise<number | null> {
-  const bubble = await scopeBubble(args);
-  if (!bubble.ok) { out(`${bubble.error}\n`); return 1; }
-  if (bubble.data === null) return null;
-  const switched = await setBubblePlugin(bubble.data, name, state);
-  if (!switched.ok) { out(`${switched.error}\n`); return 1; }
-  out(`${name} ${state} for ${bubble.data}\n`);
+const namesInText = new Intl.ListFormat("en", { type: "conjunction" });
+
+async function switches(names: string[], scope: Scope, state: "on" | "off" | null, out: Out): Promise<number> {
+  const list = namesInText.format(names);
+  if (scope.bubble !== null) {
+    const changed = await setBubblePlugin(scope.bubble.id, names, state);
+    if (!changed.ok) { out(changed.error + "\n"); return 1; }
+  } else {
+    if (state === null) { out("inherit requires a bubble\n"); return 2; }
+    const config = await loadConfig();
+    const plugins = config.plugins.filter(name => !names.includes(name));
+    if (state === "on") plugins.push(...names);
+    await saveConfig({ plugins: plugins.sort() });
+  }
+  const where = scope.bubble === null ? "globally" : `for ${scope.bubble.name}`;
+  const message = state === null ? `Restored global defaults for ${list} in ${scope.bubble?.name}.`
+    : `${state === "on" ? "Enabled" : "Disabled"} ${list} ${where}.`;
+  out(message + "\n");
   return 0;
 }
 
-export async function enablePlugin(args: string[], out: Out, ask: Ask, interactive: boolean): Promise<number> {
-  const name = args[0] ?? "";
-  const from = option(args, "--from");
-  if (from !== null) {
-    if (!existsSync(join(resolve(from), "index.ts"))) { out(`${from} has no index.ts\n`); return 2; }
-    await rm(join(paths.plugins, name), { recursive: true, force: true });
-    await mkdir(paths.plugins, { recursive: true });
-    await cp(resolve(from), join(paths.plugins, name), { recursive: true, filter: source => !source.includes("node_modules") });
+type LocalPlugin = { name: string; source: string; dest: string; copy: boolean; hash: string };
+
+async function localPlugin(name: string, from: string | null, scope: Scope): Promise<Result<LocalPlugin | null>> {
+  if (builtinPlugins().some(p => p.name === name)) {
+    return from === null ? ok(null) : fail(`${name} is supplied by Orca; choose another name for a custom plugin`);
   }
-  const builtin = builtinPlugins().some(p => p.name === name);
-  if (!builtin) {
-    const dir = join(paths.plugins, name);
-    if (!existsSync(join(dir, "index.ts"))) { out(`no plugin ${name} (built-in or in ${paths.plugins})\n`); return 2; }
-    const config = await loadConfig();
-    const pinned = `${name}@${await pluginHash(dir)}`;
-    if (!config.approved.includes(pinned)) {
-      if (!interactive) { out(`refused: enabling ${name} needs the user's approval at a terminal (run orca2 plugin enable ${name} yourself)\n`); return 3; }
-      const loaded = await loadForCheck(dir, name);
-      if (!loaded.ok) { out(`${name} does not load: ${loaded.error}\n`); return 1; }
-      const described = await describePlugin(loaded.data);
-      if (!described.ok) { out(`${name} does not load: ${described.error}\n`); return 1; }
-      out(`${described.data.join("\n")}\nIt will run with your permissions.\n`);
-      if (!await ask(`Approve and enable ${name}?`)) { out("not enabled\n"); return 1; }
-      await saveConfig({ approved: [...config.approved.filter(entry => !entry.startsWith(`${name}@`)), pinned] });
+  const dest = join(paths.plugins, name);
+  const folder = from === null ? dest : resolve(from);
+  if (!existsSync(join(folder, "index.ts"))) {
+    const repo = join(scope.directory, ".orca2", "plugins", name, "index.ts");
+    if (from === null && existsSync(repo) && await trustState(scope.directory) === "trusted") {
+      return scope.bubble === null ? fail("use --bubble to enable a repository plugin for its conversation") : ok(null);
+    }
+    return fail(`no plugin ${name} at ${folder}`);
+  }
+  const source = await realpath(folder), installed = await realpath(dest).catch(() => dest);
+  const copy = source !== installed;
+  if (copy && (source.startsWith(installed + sep) || installed.startsWith(source + sep))) {
+    return fail("source and installed plugin folders overlap");
+  }
+  return ok({ name, source, dest, copy, hash: await pluginHash(source) });
+}
+
+async function validateAndInstall(plugin: LocalPlugin): Promise<Result<null>> {
+  let staging: string | null = null;
+  try {
+    let checked = plugin.source;
+    if (plugin.copy) {
+      await mkdir(paths.plugins, { recursive: true });
+      staging = await mkdtemp(join(paths.plugins, ".install-"));
+      checked = join(staging, plugin.name);
+      await cp(plugin.source, checked, { recursive: true, filter: path => basename(path) !== "node_modules" });
+    }
+    if (await pluginHash(checked) !== plugin.hash) return fail(`${plugin.name} changed during approval; retry`);
+    const loaded = await loadForCheck(checked, plugin.name);
+    if (!loaded.ok) return loaded;
+    const description = await describePlugin(loaded.data);
+    if (!description.ok) return description;
+    if (staging !== null) {
+      const backup = join(staging, "previous"), replaced = existsSync(plugin.dest);
+      if (replaced) await rename(plugin.dest, backup);
+      try { await rename(checked, plugin.dest); }
+      catch (error) { if (replaced) await rename(backup, plugin.dest); throw error; }
+    }
+    return ok(null);
+  } finally { if (staging !== null) await rm(staging, { recursive: true, force: true }); }
+}
+
+async function enable(names: string[], flags: string[], scope: Scope, out: Out, ask: Ask, interactive: boolean): Promise<number> {
+  const from = option(flags, "--from");
+  if (flags.includes("--from") && (names.length !== 1 || from === null || from.startsWith("--"))) {
+    out("--from requires one plugin name and one folder\n"); return 2;
+  }
+  const locals: LocalPlugin[] = [];
+  for (const name of names) {
+    const plugin = await localPlugin(name, from, scope);
+    if (!plugin.ok) { out(plugin.error + "\n"); return 1; }
+    if (plugin.data !== null) locals.push(plugin.data);
+  }
+  const config = await loadConfig();
+  const pending = locals.filter(p => !config.approved.includes(`${p.name}@${p.hash}`));
+  if (pending.length > 0 && !flags.includes("--yes")) {
+    const list = namesInText.format(pending.map(p => p.name));
+    if (!interactive) { out(`Approval needed for ${list}. Use --yes to approve.\n`); return 3; }
+    const origin = from === null ? "" : ` from ${from}`;
+    if (!await ask(`Allow ${list}${origin} to run with your permissions?`)) {
+      out("Cancelled.\n"); return 1;
     }
   }
-  const scoped = await switchBubblePlugin(args, name, "on", out);
-  if (scoped !== null) return scoped;
-  const config = await loadConfig();
-  if (!config.plugins.includes(name)) await saveConfig({ plugins: [...config.plugins, name].sort() });
-  out(`${name} enabled (applies to the next agent or orchestrator turn)\n`);
-  return 0;
+  for (const plugin of locals) {
+    const checked = await validateAndInstall(plugin);
+    if (!checked.ok) { out(checked.error + "\n"); return 1; }
+  }
+  if (pending.length > 0) {
+    const approved = config.approved.filter(pin => !pending.some(p => pin.startsWith(p.name + "@")));
+    await saveConfig({ approved: [...approved, ...pending.map(p => `${p.name}@${p.hash}`)] });
+  }
+  return switches(names, scope, "on", out);
 }
 
-async function disablePlugin(args: string[], out: Out): Promise<number> {
-  const name = args[0] ?? "";
-  const scoped = await switchBubblePlugin(args, name, "off", out);
-  if (scoped !== null) return scoped;
-  const config = await loadConfig();
-  await saveConfig({ plugins: config.plugins.filter(p => p !== name) });
-  out(`${name} disabled\n`);
-  return 0;
-}
-
-async function listPlugins(out: Out): Promise<number> {
-  const config = await loadConfig();
-  const { plugins, problems } = await availablePlugins(process.cwd(), false);
-  for (const loaded of plugins.values()) out(`${config.plugins.includes(loaded.plugin.name) ? "on " : "   "} ${loaded.plugin.name.padEnd(14)} ${loaded.source.padEnd(8)} ${loaded.plugin.description}\n`);
-  for (const problem of problems) out(`!!  ${problem.name.padEnd(14)} ${problem.problem}\n`);
-  return 0;
-}
-
-export const PLUGIN_USAGE = `orca2 plugin list
-  orca2 plugin new <name> [--dir <folder>]       a plugin folder from the template
-  orca2 plugin check <name|folder>               load, type-check and test it against a temporary home
-  orca2 plugin enable <name> [--from <folder>] [--bubble [id]]   asks you first for a plugin you did not write
-  orca2 plugin disable <name> [--bubble [id]]`;
+export const PLUGIN_USAGE = `orca2 plugin list [--bubble [id] | --global] [--json]
+  orca2 plugin show <name> [--bubble [id] | --global] [--json]
+  orca2 plugin config <name> [--set <key> <JSON> | --unset <key>] [--bubble [id] | --global]
+  orca2 plugin new <name> [--dir <folder>]
+  orca2 plugin check <name|folder>
+  orca2 plugin enable <name> [name ...] [--from <folder>] [--bubble [id] | --global] [--yes]
+  orca2 plugin disable <name> [--bubble [id] | --global]
+  orca2 plugin inherit <name> --bubble [id]
+  Inside an agent, the default scope is the current conversation's bubble. --yes approves the installed content for non-interactive use.`;
 
 export async function runPlugin(args: string[], out: Out, ask: Ask, interactive: boolean): Promise<number> {
-  const [action, ...rest] = args;
+  const [action = "list", ...rest] = args;
   if (action === "new") return newPlugin(rest, out);
   if (action === "check") return checkPlugin(rest, out);
-  if (action === "enable") return enablePlugin(rest, out, ask, interactive);
-  if (action === "disable") return disablePlugin(rest, out);
-  if (action === "list" || action === undefined) return listPlugins(out);
-  out(`usage:\n  ${PLUGIN_USAGE}\n`);
-  return 2;
+  if (["help", "--help", "-h"].includes(action)) {
+    out(PLUGIN_USAGE + "\n");
+    return 0;
+  }
+  if (
+    !["list", "show", "config", "enable", "disable", "inherit"].includes(action) ||
+    (action !== "list" && !NAME.test(rest[0] ?? ""))
+  ) {
+    out(PLUGIN_USAGE + "\n");
+    return 2;
+  }
+  const firstFlag = rest.findIndex(arg => arg.startsWith("--"));
+  const count = action === "enable" ? (firstFlag < 0 ? rest.length : firstFlag) : action === "list" ? 0 : 1;
+  const targets = [...new Set(rest.slice(0, count))];
+  if (action === "enable" && !targets.every(name => NAME.test(name))) { out(PLUGIN_USAGE + "\n"); return 2; }
+  const flags = rest.slice(count);
+  for (let i = 0; i < flags.length; i++) {
+    const flag = flags[i];
+    if (flag === "--bubble") {
+      if (flags[i + 1] !== undefined && !flags[i + 1]?.startsWith("--")) i++;
+    } else if (action === "config" && (flag === "--set" || flag === "--unset")) {
+      const count = flag === "--set" ? 2 : 1;
+      if (
+        flags.length <= i + count ||
+        (flags[i + 1] ?? "").startsWith("--") ||
+        flags.slice(i + count + 1).some((f) => f === "--set" || f === "--unset")
+      ) {
+        out(PLUGIN_USAGE + "\n");
+        return 2;
+      }
+      i += count;
+    } else if (flag === "--from" && action === "enable") i++;
+    else if (!(
+      flag === "--global" ||
+      (flag === "--yes" && action === "enable") ||
+      (flag === "--json" && (action === "list" || action === "show"))
+    )) {
+      out(PLUGIN_USAGE + "\n");
+      return 2;
+    }
+  }
+  const scope = await pluginScope(
+    rest,
+    action === "list" || action === "show" || (action === "config" && !rest.includes("--set") && !rest.includes("--unset")),
+  );
+  if (!scope.ok) {
+    out(scope.error + "\n");
+    return 2;
+  }
+  const name = rest[0] ?? "";
+  if (action === "enable" || action === "disable" || action === "inherit") {
+    return withStorageLock(join(paths.runtime, "plugin-config-lock"), async () =>
+      action === "enable"
+        ? enable(targets, flags, scope.data, out, ask, interactive)
+        : switches([name], scope.data, action === "disable" ? "off" : null, out),
+    );
+  }
+  const { bubble, directory } = scope.data;
+  if (action === "config") {
+    const present =
+      builtinPlugins().some((p) => p.name === name) ||
+      existsSync(join(paths.plugins, name, "index.ts")) ||
+      ((await trustState(directory)) === "trusted" && existsSync(join(directory, ".orca2", "plugins", name, "index.ts")));
+    if (!present) {
+      out(`no plugin ${name}\n`);
+      return 1;
+    }
+    const set = rest.indexOf("--set"),
+      unset = rest.indexOf("--unset"),
+      id = bubble?.id ?? null;
+    const settings =
+      set < 0 && unset < 0
+        ? await pluginSettings(name, id)
+        : await withStorageLock(join(paths.runtime, "plugin-config-lock"), () =>
+            setPluginSetting(
+              name,
+              id,
+              rest[(set < 0 ? unset : set) + 1] ?? "",
+              set < 0 ? null : parseJson(rest[set + 2] ?? ""),
+            ),
+          );
+    if (!settings.ok) {
+      out(settings.error + "\n");
+      return 1;
+    }
+    out(JSON.stringify(settings.data) + "\n");
+    return 0;
+  }
+  const config = await loadConfig();
+  const { plugins, problems } = await availablePlugins(directory, (await trustState(directory)) === "trusted");
+  const names = [...new Set([...plugins.keys(), ...problems.map((p) => p.name)])]
+    .sort()
+    .filter((n) => action === "list" || n === name);
+  if (names.length === 0 && action === "show") {
+    out(`no plugin ${name}\n`);
+    return 1;
+  }
+  const rows = names.map((n) => {
+    const loaded = plugins.get(n),
+      problem = problems.find((p) => p.name === n);
+    const override = bubble?.plugins.on.includes(n) === true ? "on" : bubble?.plugins.off.includes(n) === true ? "off" : null;
+    return {
+      name: n,
+      enabled: loaded !== undefined && (override === null ? config.plugins.includes(n) : override === "on"),
+      override,
+      source: loaded?.source ?? null,
+      directory: loaded?.dir ?? problem?.dir ?? null,
+      description: loaded?.plugin.description ?? "",
+      problem: problem?.problem ?? null,
+    };
+  });
+  if (rest.includes("--json")) {
+    out(JSON.stringify({ scope: bubble?.id ?? "global", plugins: rows }) + "\n");
+    return 0;
+  }
+  for (const r of rows) out(`${r.enabled ? "on " : "off"} ${r.name.padEnd(14)} ${r.problem ?? r.description}\n`);
+  const loaded = plugins.get(name);
+  if (action === "show" && loaded !== undefined) {
+    const details = await describePlugin(loaded);
+    if (!details.ok) {
+      out(details.error + "\n");
+      return 1;
+    }
+    out(details.data.join("\n") + "\n");
+  }
+  return 0;
 }

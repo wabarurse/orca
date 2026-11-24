@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { asRecord, errorMessage, fail, loadConfig, ok, paths, type Result } from "../../config";
 import { RESERVED_DATA } from "../bubbles";
@@ -173,9 +173,14 @@ export async function availablePlugins(directory: string | null, trusted: boolea
   }
   const roots: { root: string; source: PluginSource }[] = [{ root: paths.plugins, source: "user" }];
   if (trusted && directory !== null) roots.push({ root: join(directory, ".orca2", "plugins"), source: "repo" });
+  const visited = new Set<string>();
   for (const { root, source } of roots) {
+    const location = await realpath(root).catch(() => root);
+    if (visited.has(location)) continue;
+    visited.add(location);
     for (const name of await folders(root)) {
       const dir = join(root, name);
+      if (source === "user" && plugins.get(name)?.source === "builtin") continue;
       if (plugins.has(name)) { problems.push({ name, dir, problem: `a plugin named ${name} is already loaded` }); continue; }
       if (source === "user" && !config.approved.includes(`${name}@${await pluginHash(dir)}`)) {
         problems.push({ name, dir, problem: `not approved (new or changed): run orca2 plugin enable ${name}` });

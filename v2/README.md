@@ -80,8 +80,11 @@ not shipped).
   each bubble then has its own on/off lists (Ctrl+P → `t`
   in the TUI, or `orca2 plugin enable|disable <name> --bubble`). The footer's `N plugins` and the agent's "Plugins on in
   this bubble" list are the same set. Read when an agent starts, so tools and prompt stay fixed for a run.
+To enable several installed plugins together, run `orca2 plugin enable images sandbox tmux rex`. It asks once for the versions that need approval. Use `orca2 plugin show <name>` to inspect details.
+
 - **Approval**: a user plugin loads only while its exact content (a hash of its files) is approved. `orca2 plugin
-  enable` shows what it adds and asks at a terminal; without one it refuses, so an agent cannot enable a plugin.
+  enable` asks at a terminal, or accepts `--yes` in scripts and agents. Inside an agent it targets that conversation’s bubble, including from worker worktrees. Use `--global` to change the default, `inherit` to remove a bubble override, and `list --json` to verify the effective setting.
+- **Settings**: `orca2 plugin config <name> [--set <key> <JSON> | --unset <key>]` reads effective settings or changes a documented plugin option. Bubble values override global ones.
 - **Storage**: `$ORCA_DATA/<plugin>/` (conversation), `$ORCA_DATA/bubble/<plugin>/`, `$ORCA_DATA/global/<plugin>/`.
   `bubble/` links to the bubble's `data/` (made or moved when the conversation gets or joins a bubble) and `global/`
   to `~/.orca2/global/`; both names are reserved, and a real folder under either is reported, never replaced.

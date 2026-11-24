@@ -12,7 +12,7 @@ export function pluginRows(plugins: Map<string, LoadedPlugin>, problems: PluginP
     const tabs = pages.get(name) ?? [];
     return { id: name, name, status: on ? "on" : "off", info: !on ? "t turns it on" : tabs.length === 0 ? "no page" : tabs.map(pageLabel).join(" · "), tone: on ? "good" : "dim" };
   });
-  return [...rows, ...problems.map((p): Row => ({ id: `${PROBLEM}${p.name}`, name: p.name, status: "broken", info: p.problem, tone: "bad" }))];
+  return [...rows, ...problems.map((p): Row => ({ id: `${PROBLEM}${p.name}`, name: p.name, status: p.problem.startsWith("not approved") ? "approval needed" : "broken", info: p.problem, tone: p.problem.startsWith("not approved") ? "dim" : "bad" }))];
 }
 
 export const isProblem = (row: Row | undefined): boolean => row !== undefined && row.id.startsWith(PROBLEM);
@@ -20,7 +20,7 @@ export const isProblem = (row: Row | undefined): boolean => row !== undefined &&
 export function pluginDetails(plugins: Map<string, LoadedPlugin>, problems: PluginProblem[], enabled: string[], pages: PluginPages, row: Row): Section[] {
   if (isProblem(row)) {
     const problem = problems.find(p => `${PROBLEM}${p.name}` === row.id);
-    return problem === undefined ? [] : [{ title: "Does not load", lines: [problem.problem, problem.dir] }];
+    return problem === undefined ? [] : [{ title: problem.problem.startsWith("not approved") ? "Approval needed" : "Does not load", lines: [problem.problem, problem.dir] }];
   }
   const loaded = plugins.get(row.id);
   if (loaded === undefined) return [];
