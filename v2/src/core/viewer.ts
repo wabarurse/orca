@@ -24,3 +24,8 @@ export async function readViewer(conversation: string): Promise<Viewer | null> {
   const parsed = json.ok ? ViewerFile.safeParse(json.data) : null;
   return parsed !== null && parsed.success && pidAlive(parsed.data.pid) ? parsed.data : null;
 }
+
+export function viewerEnv(env: Record<string, string>, viewer: Viewer | null): Record<string, string> {
+  const { REX_SESSION: _session, REX_BLOCK: _block, ...rest } = env;
+  return viewer !== null && viewer.rexSession !== null && viewer.rexBlock !== null ? { ...rest, REX_SESSION: viewer.rexSession, REX_BLOCK: viewer.rexBlock } : rest;
+}

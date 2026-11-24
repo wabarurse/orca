@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
-import { saveViewer, viewerHere } from "../core/viewer";
+import { readViewer, saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
 import { accounts, parseLogin, signIn, type LoginRequest, type ProviderName } from "../api/auth";
 import { contextWindow } from "../api/model";
@@ -202,6 +202,7 @@ export class App {
 
   private async slow(pid: number | null): Promise<void> {
     const id = this.conversation.id;
+    if (await readViewer(id) === null) await saveViewer(id, viewerHere(process.env, process.pid)).catch(() => undefined);
     if (pid === null && this.queued.length > 0) await this.deps.ensureDaemon(id).catch((error: unknown) => fail(errorMessage(error)));
     const runs = await listRuns(id);
     const running = runs.filter(r => r.agent !== "orchestrator" && live(r)).length;

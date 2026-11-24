@@ -6,6 +6,7 @@ import { ToolRefusal, type Tool } from "../registry";
 import { refusal } from "./guard";
 import { hint } from "./hints";
 import { readOnly } from "./readonly";
+import { readViewer, viewerEnv } from "../../viewer";
 
 export const MAX_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -43,7 +44,7 @@ export const bash: Tool = {
     if (refused !== null) throw new ToolRefusal(refused.id, refused.text);
     const timeoutMs = typeof input.timeout_ms === "number" && input.timeout_ms > 0 ? Math.min(MAX_TIMEOUT_MS, Math.floor(input.timeout_ms)) : MAX_TIMEOUT_MS;
     const config = await loadConfig();
-    const env = agentEnv(ctx.conversation, ctx.agent, ctx.data);
+    const env = viewerEnv(agentEnv(ctx.conversation, ctx.agent, ctx.data), await readViewer(ctx.conversation));
     await mkdir(env.ORCA_ARTIFACTS ?? ctx.cwd, { recursive: true });
     const proc = Bun.spawn(["bash", "-c", `exec 2>&1\n${command}`], { cwd: ctx.cwd, env, stdout: "pipe", stdin: "ignore", detached: true });
     let timedOut = false, limited = false;
