@@ -12,6 +12,7 @@ const standardWindows: Readonly<Record<string, number>> = {
   "gpt-daybreak-red-latest": 372000,
   "gpt-5.5": 272000,
   "codex-auto-review": 272000,
+  "claude-fable-5-2": 1000000,
   "claude-fable-5-1": 1000000,
   "claude-fable-5": 1000000,
   "claude-opus-5-5": 1000000,

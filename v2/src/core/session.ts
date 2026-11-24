@@ -1,7 +1,8 @@
 import { rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { provider as loadProvider } from "../api";
-import { providerFor, validateSettings, type Effort, type RequestSettings } from "../api/model";
+import { contextWindow, modelContextLimit, prefetchContextLimits, providerFor, validateSettings, type Effort, type RequestSettings } from "../api/model";
+import type { Provider } from "../api";
 import { fail, loadConfig, ok, paths, type Result } from "../config";
 import { ensureDataDirs } from "./bubbles";
 import { readConversation } from "./conversations";
@@ -45,7 +46,21 @@ export async function resolveModel(conversation: string, override: string | null
   if (scripted !== undefined && scripted.length > 0) return ok({ model, provider: scriptedProvider(scripted), settings: null, contextLimit: null });
   const name = providerFor(model);
   const provider = await loadProvider(name, { profile: name === "anthropic" ? config.account : config.openaiAccount });
-  return provider.ok ? ok({ model, provider: provider.data, settings: requestSettings(model, meta?.effort ?? null, meta?.fast ?? false), contextLimit: null }) : provider;
+  if (!provider.ok) return provider;
+  await learnContextWindow(model, provider.data);
+  return ok({ model, provider: provider.data, settings: requestSettings(model, meta?.effort ?? null, meta?.fast ?? false), contextLimit: modelContextLimit(model) ?? null });
+}
+
+export const CATALOG_WAIT_MS = 5000;
+
+export async function learnContextWindow(model: string, provider: Provider): Promise<boolean> {
+  if (!contextWindow({}, model).estimated) return false;
+  let wake = (): void => undefined;
+  const deadline = new Promise<void>(done => { wake = done; });
+  const timer = setTimeout(() => wake(), CATALOG_WAIT_MS);
+  await Promise.race([prefetchContextLimits(provider), deadline]);
+  clearTimeout(timer);
+  return !contextWindow({}, model).estimated;
 }
 
 const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
