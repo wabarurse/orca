@@ -12,16 +12,13 @@ yourself.
 ## The loop
 
 1. `orca2 plugin new <name> --dir <folder>`: a complete plugin (index.ts, a test, README.md, an empty skills/) that
-   already loads and passes its test. Use your working directory (a worktree) for `--dir`; a built-in plugin goes to
-   `v2/src/plugins/<name>`, and there you replace the template's `import type … from "orca2/plugin"` with
-   `../../core/plugins` (the `orca2/plugin` path exists only inside `plugin check`, so the repository's own type
-   check fails on it). Delete the template's placeholder tool.
+   already loads and passes its test. Use your working directory (a worktree) for `--dir`. Plugins never go into the
+   orca2 repository. Delete the template's placeholder tool.
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
 4. Report to the orchestrator: what the plugin adds, the check output, and the command the user runs:
    `orca2 plugin enable <name> --from <folder>`. That command shows the user what the plugin adds and asks.
-   For a built-in plugin, add it to `v2/src/plugins/index.ts` and open a PR instead.
 
 Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
 are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
@@ -39,14 +36,12 @@ lowercase letters, digits and underscores, unique across enabled plugins.
   README.md       what it adds and why
 ```
 
-A user plugin imports types only: `import type { Plugin } from "orca2/plugin";`. It must not import orca2's runtime
-modules (they are not on its path); everything it needs comes through the context arguments. A built-in plugin in
-`v2/src/plugins/` imports from `../../core/plugins`: `definePlugin`, `defineUi`, `defineBackground`, the types, and
-the helpers `writeAtomic(file, text)` (whole-file write), `withStorageLock(path, fn)` (one writer at a time across
+A plugin imports orca2 only through `orca2/plugin`, which orca2 provides when it loads the plugin: `definePlugin`,
+`defineUi`, `defineBackground`, the types, `ok`/`fail`/`parseJson`/`errorMessage`, `paths`, `z` (zod), and the helpers `writeAtomic(file, text)` (whole-file write), `withStorageLock(path, fn)` (one writer at a time across
 processes), `exec(argv)` and `which(name)` (run a CLI from orca2's home; a program on the current PATH) and
-`launchCommand(launch)` (the agent launch command every runner uses). It may import other core modules (`src/core`,
-`src/config`, `src/api`), but prefer what the contexts give. It never imports another plugin, not even a built-in
-one: `src/independence.test.ts` fails on it. What two plugins would share belongs in the core.
+`launchCommand(launch)` (the agent launch command every runner uses). Prefer what the contexts give. It never
+imports another plugin or orca2's source files directly. What two plugins would share belongs in the core, exported
+from `src/core/plugins/api.ts`.
 
 ## index.ts: the Plugin
 
@@ -116,8 +111,8 @@ conversation deletes its folder.
 
 Writing: write files whole (a temp file in the same folder, then rename) so a reader never sees half a file. That
 alone does not stop two processes (a worker's tool and the daemon's watcher) from losing each other's update in a
-read-modify-write: built-ins wrap it in `withStorageLock`; a user plugin keeps one writer per file (for example one
-file per record, named by its id).
+read-modify-write: wrap it in `withStorageLock`, or keep one writer per file (for example one file per record, named
+by its id).
 
 Another plugin's data: reading `$ORCA_DATA/<other>/` is allowed (from `ctx.data("conversation")` that is
 `join(dir, "..", "<other>")`); writing it is not, so change it by telling the orchestrator, whose tools do.
@@ -221,7 +216,7 @@ export default ui;
 ```
 
 Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q. The core
-uses Ctrl+ a, c, d, j, k, n, u, v, w; built-ins take q (questions) and t (tasks). On the page the core uses j, k, h,
+uses Ctrl+ a, c, d, j, k, n, u, v, w; the questions and tasks plugins take q and t. On the page the core uses j, k, h,
 l, q, r, a, A, u (archive and restore), the digits, Tab, Esc, PgUp/PgDn, and s on the Agents tab; any other single
 character is yours for actions, and `key: "enter"` runs on Enter.
 `tone` is normal, good, warn, bad or dim. A tab belongs to one plugin: rows cannot be added to another plugin's tab.
@@ -272,8 +267,8 @@ export default background;
 ## Tests
 
 `<name>.test.ts` beside `index.ts`, with `bun:test`. Every test process already runs with a temporary `ORCA2_HOME`
-(the repository's test preload, and `plugin check`); never touch `~/.orca2` or the user's files. A built-in creates a
-conversation with `createConversation(dir, name)` and takes its fakes from `../../core/plugins/testing`:
+(the plugins folder's preload, and `plugin check`); never touch `~/.orca2` or the user's files. A test creates a
+conversation with `createConversation(dir, name)` and takes its fakes from `orca2/plugin/testing`:
 `toolContext(conversation, cwd, overrides)` for tools, `pluginContext(conversation, "<name>", cwd)` for hooks and tabs,
 `recordingHost(ctx, answers)` for tab actions and commands (it records `note`, `say` and `open`), and `item`,
 `present` and `unwrap` in place of `!` and casts; background code gets `backgroundContext(conversation, "<name>", dir)`

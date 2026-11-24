@@ -1,7 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { z } from "zod";
-import { writeAtomic, type Result } from "../../core/plugins";
+import { z, writeAtomic, type Result } from "orca2/plugin";
 
 const PinSchema = z.object({ id: z.string(), text: z.string(), by: z.string(), at: z.string() });
 const PinsSchema = z.array(PinSchema);

@@ -1,4 +1,4 @@
-import { defineUi, type PluginUi } from "../../core/plugins";
+import { defineUi, type PluginUi } from "orca2/plugin";
 import { readPins, shownPins, writePins } from "./store";
 
 const ui: PluginUi = defineUi({

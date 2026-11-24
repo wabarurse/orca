@@ -67,12 +67,17 @@ rendered verbatim beside the summary. `runtime` became `subagent list`; `history
 A plugin is a folder with `index.ts` (tools, prompt lines, skills, storage, hooks, bundles), optionally `ui.ts`
 (tabs, counts, commands, tool lines, folds; drawn by orca) and `background.ts` (watchers, a memory section, a
 runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide is the `orca-plugin` skill
-(`skills/orca-plugin/SKILL.md`, shipped in the binary). `src/plugins/example/` uses every slot.
+(`skills/orca-plugin/SKILL.md`, shipped in the binary). `src/test/plugins/example/` uses every slot (a test fixture,
+not shipped).
 
-- **Where**: built-in in `src/plugins/` (listed in `src/plugins/index.ts`), user plugins in `~/.orca2/plugins/`,
-  a folder's own in `.orca2/plugins/` (unless the folder is untrusted).
-- **Enablement**: `plugins = [...]` in `~/.orca2/config.toml` is the default for every bubble (without the line: images,
-  pr-watch, processes, questions, rex, sandbox, tasks and tmux); each bubble then has its own on/off lists (Ctrl+P → `t`
+- **Where**: orca2 ships no plugins. User plugins live in `~/.orca2/plugins/`, outside this repository; a folder's
+  own in `.orca2/plugins/` (unless the folder is untrusted).
+- **Imports**: a plugin imports `orca2/plugin` (the types and helpers such as `definePlugin`, `writeAtomic`, `exec`,
+  `z`) and, in its tests, `orca2/plugin/testing`. orca2 provides both when it loads a plugin, the installed binary
+  included (`src/core/plugins/modules.ts`); for `bun test` and an editor, the plugins folder carries a `bunfig.toml`
+  preloading `src/core/plugins/preload.ts` and a `tsconfig.json` mapping both paths to an orca2 checkout.
+- **Enablement**: `plugins = [...]` in `~/.orca2/config.toml` is the default for every bubble (without the line: none);
+  each bubble then has its own on/off lists (Ctrl+P → `t`
   in the TUI, or `orca2 plugin enable|disable <name> --bubble`). The footer's `N plugins` and the agent's "Plugins on in
   this bubble" list are the same set. Read when an agent starts, so tools and prompt stay fixed for a run.
 - **Approval**: a user plugin loads only while its exact content (a hash of its files) is approved. `orca2 plugin
@@ -85,15 +90,6 @@ runner, stop/remove hooks). Types: `src/core/plugins/types.ts`; the full guide i
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
   orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]`.
 
-### Built-in plugins
-
-On by default: `questions` (`ask` tool, Questions tab on Ctrl+Q), `tasks` (`task` tool, Tasks tab on Ctrl+T, a task
-per spawned branch, the Tasks section of rolling memory), `pr-watch` (merged/blocked notices for linked PRs, PRs
-tab), `processes` (`process` tool for long commands, Processes tab), `images` (`images` tool, Images tab),
-`sandbox` (`sandbox` tool: writes confined to a scratch folder, sandbox-exec or bwrap). Opt-in: `tmux` and `rex`
-(runners: agents in windows you can watch; `/mux` or `runner = "tmux"`), `example`. A plugin imports only from the
-core (`src/core`, `src/config`, `src/api`), never from another plugin; `src/independence.test.ts` checks it.
-
 ## Layout
 
 ```
@@ -103,7 +99,7 @@ src/core     types, transcript, inbox, bubbles, archive, images, loop/, tools/, 
              session (one run assembled), headless, trust, knowledge (reference sections)
 src/tui      OpenTUI view (copied from v1's tui/otui), the app shell, the work page
 src/cli      orca2 commands
-src/plugins  built-in plugins
+src/test     shared test fixtures, plugins/example included
 skills/      skills shipped with orca2
 ```
 

@@ -7,6 +7,7 @@ import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
 import type { GuardInput } from "../tools/bash/guard";
+import { registerPluginModules } from "./modules";
 import type { AfterTool, BeforeRequest, BeforeTool, Listener, OnInput, Plugin, PluginBackground, PluginEvent, PluginUi, Retention, Service } from "./types";
 
 export type PluginSource = "builtin" | "user" | "repo";
@@ -125,6 +126,7 @@ export function validatePlugin(value: unknown, folder: string): Result<Plugin> {
 const moduleDefault = (module: unknown): unknown => typeof module === "object" && module !== null && "default" in module ? module.default : undefined;
 
 async function importModule(file: string): Promise<Result<unknown>> {
+  registerPluginModules();
   try {
     const module: unknown = await import(file);
     return ok(module);

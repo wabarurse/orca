@@ -11,7 +11,9 @@ Rules:
   (`count > 0`, `x !== null`), never truthiness; every promise awaited or handled; no comments. Expected failures return
   the one `Result` (`src/config/result.ts`: `ok`/`fail`) instead of throwing. The gate is
   `tsc --noEmit && eslint . --max-warnings 0 && bun test`.
-- Layers point down: config < api < core < tui · cli; built-in plugins (`src/plugins`) import core, core never
-  imports them (the CLI registers them).
+- Layers point down: config < api < core < tui · cli. No plugin lives in this repository: plugins are the user's,
+  in `~/.orca2/plugins/`, and import orca2 only through `orca2/plugin` (`src/core/plugins/api.ts`, provided at load
+  by `src/core/plugins/modules.ts`). What a plugin needs from the core is exported there.
 - Keep tool descriptions and role prompts stable (the prompt cache depends on them); plugin prompt lines too.
-- A new slot or hook goes into `src/core/plugins/types.ts`, the `orca-plugin` skill and the example plugin together.
+- A new slot or hook goes into `src/core/plugins/types.ts`, the `orca-plugin` skill and the example plugin
+  (`src/test/plugins/example`, a test fixture) together.

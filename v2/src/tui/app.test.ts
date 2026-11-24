@@ -10,7 +10,7 @@ import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
-import { BUILTINS } from "../plugins";
+import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
 import { App } from "./app";
 import type { Key, screens, Terminal } from "./components";
@@ -73,7 +73,7 @@ describe("tui", () => {
   });
 
   test("a new folder opens without a trust question; a plugin tab, its count and its command work", async () => {
-    registerBuiltins(BUILTINS);
+    registerBuiltins([EXAMPLE]);
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
@@ -144,7 +144,7 @@ describe("tui", () => {
   });
 
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
-    registerBuiltins(BUILTINS);
+    registerBuiltins([runnerPlugin("tmux")]);
     await saveConfig({ plugins: ["tmux"], runner: "plain" });
     const t = await app(home.path());
     await t.type("/mux rex");
@@ -336,7 +336,7 @@ describe("tui", () => {
   });
 
   test("a plugin tab archives with a (rows move under a closed Archived heading), Enter opens it, u restores, A archives all after y", async () => {
-    registerBuiltins(BUILTINS);
+    registerBuiltins([EXAMPLE]);
     await saveConfig({ plugins: ["example"] });
     const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-archive-")));
     await Bun.sleep(50);
@@ -414,7 +414,7 @@ describe("tui", () => {
   });
 
   test("the footer counts plugins at its right; Ctrl+P lists them with their pages, Enter opens one, t turns it off for the bubble", async () => {
-    registerBuiltins(BUILTINS);
+    registerBuiltins([EXAMPLE]);
     await saveConfig({ plugins: ["example"] });
     const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-plugins-")));
     await Bun.sleep(50);

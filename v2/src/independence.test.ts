@@ -22,26 +22,17 @@ test("every relative import stays inside v2", () => {
   expect(outside).toEqual([]);
 });
 
-const CORE = ["src/core", "src/config", "src/api"].map(dir => join(ROOT, dir));
-const inside = (target: string, dir: string): boolean => target === dir || target.startsWith(`${dir}/`);
+const EXAMPLE = join(ROOT, "src/test/plugins/example");
+const PLUGIN_API = new Set(["orca2/plugin", "orca2/plugin/testing", "bun:test"]);
 
-function crossPluginImports(pluginsDir: string): string[] {
+test("the example plugin imports only orca2/plugin, node: modules and its own files, as a plugin outside the repository must", () => {
   const out: string[] = [];
-  for (const plugin of readdirSync(pluginsDir, { withFileTypes: true }).filter(entry => entry.isDirectory())) {
-    const own = join(pluginsDir, plugin.name);
-    for (const file of files(own)) {
-      const allowed = [own, ...CORE, ...(file.endsWith(".test.ts") ? [join(ROOT, "src/test")] : [])];
-      for (const match of readFileSync(file, "utf8").matchAll(IMPORT)) {
-        const spec = match[1] ?? match[2] ?? "";
-        if (!spec.startsWith(".")) continue;
-        const target = resolve(dirname(file), spec);
-        if (!allowed.some(dir => inside(target, dir))) out.push(`${relative(ROOT, file)} → ${spec}`);
-      }
+  for (const file of files(EXAMPLE)) {
+    for (const match of readFileSync(file, "utf8").matchAll(IMPORT)) {
+      const spec = match[1] ?? match[2] ?? "";
+      const own = spec.startsWith(".") && resolve(dirname(file), spec).startsWith(`${EXAMPLE}/`);
+      if (!own && !PLUGIN_API.has(spec) && !spec.startsWith("node:")) out.push(`${relative(ROOT, file)} → ${spec}`);
     }
   }
-  return out;
-}
-
-test("a plugin imports only from the core (src/core, src/config, src/api), never from another plugin", () => {
-  expect(crossPluginImports(join(ROOT, "src/plugins"))).toEqual([]);
+  expect(out).toEqual([]);
 });
