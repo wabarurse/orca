@@ -29,7 +29,7 @@ import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf"
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
-import { accountChoices, effortChoices, fastChoices, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
+import { accountChoices, effortChoices, fastChoices, learnWindow, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
@@ -87,6 +87,7 @@ export class App {
   private account = "";
   private bubbleName: string | null = null;
   private model = "";
+  private learning = new Set<string>();
   private settings = "";
   private timer: ReturnType<typeof setInterval> | null = null;
   private frame: ReturnType<typeof setInterval> | null = null;
@@ -214,6 +215,7 @@ export class App {
     const config = await loadConfig();
     const meta = await readConversation(id);
     this.model = meta?.model ?? config.model;
+    this.learn(this.model);
     this.settings = settingsLabel(meta);
     this.bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
     this.noBubble = meta?.noBubble === true;
@@ -263,6 +265,12 @@ export class App {
 
   private animating(): boolean {
     return this.page === null && this.modal === null && (this.busy || (this.waiting !== null && this.waiting.kind !== "wait-inbox"));
+  }
+
+  private learn(model: string): void {
+    if (this.learning.has(model)) return;
+    this.learning.add(model);
+    learnWindow(model).then(learned => { if (learned) this.draw(); }, () => undefined);
   }
 
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
@@ -512,6 +520,7 @@ export class App {
     if (saved.data.id === this.conversation.id) {
       this.current = { conversation: saved.data, transcript: this.transcript };
       this.model = saved.data.model ?? model;
+      this.learn(this.model);
       this.settings = settingsLabel(saved.data);
       this.lastSlow = 0;
     }
