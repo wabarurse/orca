@@ -60,7 +60,6 @@ export type Tool = {
 export const CORE_TOOLS: Record<Role, string[]> = {
   orchestrator: ["bash", "read", "subagent", "inbox", "memory", "notebook", "behavior", "skill", "web_search", "mcp"],
   worker: ["bash", "read", "write", "edit", "inbox", "memory", "notebook", "skill", "web_search", "mcp"],
-  reviewer: ["bash", "read", "write", "edit", "inbox", "memory", "notebook", "skill", "web_search", "mcp"],
 };
 
 export const CORE_TOOL_NAMES = ["bash", "read", "write", "edit", "subagent", "inbox", "memory", "notebook", "behavior", "skill", "web_search", "mcp"];

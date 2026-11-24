@@ -26,7 +26,7 @@ bun run check && bun run lint && bun test
 
 ## What the core is
 
-- **One agent loop** (`src/core/loop/agent.ts`) for the orchestrator, workers, reviewers and plugin bundles: inbox →
+- **One agent loop** (`src/core/loop/agent.ts`) for the orchestrator, workers and plugin bundles: inbox →
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
