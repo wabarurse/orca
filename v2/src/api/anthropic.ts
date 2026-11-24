@@ -5,7 +5,7 @@ import { boundedSearchResponse, SEARCH_INSTRUCTIONS, searchPrompt } from "./sear
 import { claudeSearchResults } from "./search";
 import { validateSettings, type RequestSettings } from "./model";
 import Anthropic, { type Middleware, type MiddlewareNext } from "@anthropic-ai/sdk";
-import type { Message, MessageParam, MessageCreateParamsBase, TextBlockParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import type { Message, MessageParam, MessageCreateParamsBase, OutputConfig, TextBlockParam, ThinkingBlockParam } from "@anthropic-ai/sdk/resources/messages";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./model";
 import { claudeCatalogEfforts, rememberCatalogEfforts } from "./model";
@@ -171,11 +171,13 @@ function imageProblem(messages: MessageParam[]): string | undefined {
   return undefined;
 }
 
+const wireEffort = z.custom<NonNullable<OutputConfig["effort"]>>(value => typeof value === "string" && value.length > 0);
+
 export function claudeRequestSettings(model: string, settings: RequestSettings = {}): Pick<MessageCreateParamsBase, "output_config" | "speed"> {
   const checked = validateSettings(model, settings);
   if (!checked.ok) throw new Error(checked.error);
   return {
-    ...(settings.effort !== undefined ? { output_config: { effort: settings.effort } } : {}),
+    ...(settings.effort !== undefined ? { output_config: { effort: wireEffort.parse(settings.effort) } } : {}),
     ...(settings.fast === true ? { speed: "fast" } : {}),
   };
 }

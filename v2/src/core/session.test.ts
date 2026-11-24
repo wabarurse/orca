@@ -1,17 +1,17 @@
 import { expect, test } from "bun:test";
 import type { Provider } from "../api";
 import { contextWindow, rememberCatalogLimits } from "../api/model";
-import { learnContextWindow } from "./session";
+import { learnCatalog } from "./session";
 
 const catalog = (models: () => Promise<string[]>): Provider => ({ name: "anthropic", complete: async () => { throw new Error("no model calls here"); }, models });
 
 test("a model missing from the built-in table gets its window from the provider's catalog before a request, not the 128k guess", async () => {
   expect(contextWindow({}, "claude-new-9").limit).toBe(128000);
   let asked = 0;
-  const learned = await learnContextWindow("claude-new-9", catalog(async () => { asked++; rememberCatalogLimits([["claude-new-9", 1000000]]); return ["claude-new-9"]; }));
+  const learned = await learnCatalog("claude-new-9", catalog(async () => { asked++; rememberCatalogLimits([["claude-new-9", 1000000]]); return ["claude-new-9"]; }), true);
   expect(learned).toBe(true);
   expect(contextWindow({}, "claude-new-9")).toEqual({ limit: 1000000, estimated: false });
-  expect(await learnContextWindow("claude-new-9", catalog(async () => { asked++; return []; }))).toBe(false);
+  expect(await learnCatalog("claude-new-9", catalog(async () => { asked++; return []; }), true)).toBe(false);
   expect(asked).toBe(1);
 });
 

@@ -1,11 +1,18 @@
 import type { ProviderName } from "../auth";
-import { modelCapabilities, type Effort } from "./capabilities";
+import { effortRank, modelCapabilities, type Effort } from "./capabilities";
+import { catalogLimitEntries } from "./context-window";
+import { providerFor } from "./provider-for";
 
 const SMALL: Record<ProviderName, string> = { anthropic: "claude-haiku-5-5", openai: "gpt-6-luna" };
+const FAMILY: Record<ProviderName, string> = { anthropic: "haiku", openai: "luna" };
 
-export const smallModel = (provider: ProviderName): string => SMALL[provider];
+export function smallModel(provider: ProviderName): string {
+  const listed = catalogLimitEntries().map(([model]) => model).filter(model => providerFor(model) === provider);
+  if (listed.length === 0 || listed.includes(SMALL[provider])) return SMALL[provider];
+  return listed.find(model => model.includes(FAMILY[provider])) ?? SMALL[provider];
+}
 
 export function effortUpTo(model: string, wanted: Effort): Effort | undefined {
-  const order: Effort[] = ["low", "medium", "high", "xhigh", "max"], offered = modelCapabilities(model).effort;
-  return offered.filter(level => order.indexOf(level) <= order.indexOf(wanted)).at(-1) ?? offered[0];
+  const offered = modelCapabilities(model).effort;
+  return offered.filter(level => effortRank(level) <= effortRank(wanted)).at(-1) ?? offered[0];
 }

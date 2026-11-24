@@ -29,7 +29,7 @@ import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf"
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail } from "./view";
 import { renderWork, type WorkTab } from "./work";
-import { accountChoices, effortChoices, fastChoices, learnWindow, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
+import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
@@ -270,7 +270,7 @@ export class App {
   private learn(model: string): void {
     if (this.learning.has(model)) return;
     this.learning.add(model);
-    learnWindow(model).then(learned => { if (learned) this.draw(); }, () => undefined);
+    learnModel(model).then(learned => { if (learned) this.draw(); }, () => undefined);
   }
 
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
@@ -493,12 +493,14 @@ export class App {
       saved = await setModel(conversation, wanted);
       note = `model ${wanted} from the next request`;
     } else if (name === "effort") {
+      await learnModel(model);
       const level = arg.length > 0 ? arg : await this.choose(`effort for ${model}   (/effort <level|default> sets directly)`, effortChoices(model, conversation.effort));
       if (level === null) return;
       saved = await setEffort(conversation, level);
       note = `effort for ${model}: ${level} from the next request`;
     } else if (name === "fast") {
       if (arg.length > 0 && arg !== "on" && arg !== "off") { this.flash("usage: /fast [on|off]", true); return; }
+      await learnModel(model);
       const on = arg.length > 0 ? arg === "on" : await this.choose(`fast mode for ${model}   (/fast on|off sets directly)`, fastChoices(conversation.fast));
       if (on === null) return;
       saved = await setFast(conversation, on);

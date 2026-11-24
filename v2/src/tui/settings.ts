@@ -3,7 +3,7 @@ import { accounts, type Account, type ProviderName } from "../api/auth";
 import { modelCapabilities, providerFor } from "../api/model";
 import { loadConfig, ok, fail, saveConfig, type Result } from "../config";
 import { saveConversation, type Conversation } from "../core/conversations";
-import { learnContextWindow } from "../core/session";
+import { learnCatalog } from "../core/session";
 import { dim } from "./components";
 
 export type Choice<T> = { value: T; label: string; current: boolean };
@@ -22,10 +22,10 @@ export async function selectedAccount(model: string): Promise<{ provider: Provid
   return { provider: name, profile: configured.length > 0 ? configured : "default" };
 }
 
-export async function learnWindow(model: string): Promise<boolean> {
+export async function learnModel(model: string): Promise<boolean> {
   const account = await selectedAccount(model);
   const loaded = await provider(account.provider, { profile: account.profile });
-  return loaded.ok ? learnContextWindow(model, loaded.data) : false;
+  return loaded.ok ? learnCatalog(model, loaded.data, true) : false;
 }
 
 export async function modelChoices(model: string): Promise<Result<Choice<string>[]>> {
