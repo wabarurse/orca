@@ -1,7 +1,7 @@
 import { rename } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { provider as loadProvider } from "../api";
-import { contextWindow, modelContextLimit, prefetchContextLimits, providerFor, validateSettings, type Effort, type RequestSettings } from "../api/model";
+import { catalogLimitEntries, catalogReported, contextWindow, knownEfforts, modelContextLimit, prefetchContextLimits, providerFor, validateSettings, type RequestSettings } from "../api/model";
 import type { Provider } from "../api";
 import { fail, loadConfig, ok, paths, type Result } from "../config";
 import { ensureDataDirs } from "./bubbles";
@@ -47,26 +47,30 @@ export async function resolveModel(conversation: string, override: string | null
   const name = providerFor(model);
   const provider = await loadProvider(name, { profile: name === "anthropic" ? config.account : config.openaiAccount });
   if (!provider.ok) return provider;
-  await learnContextWindow(model, provider.data);
-  return ok({ model, provider: provider.data, settings: requestSettings(model, meta?.effort ?? null, meta?.fast ?? false), contextLimit: modelContextLimit(model) ?? null });
+  const effort = meta?.effort ?? null, fast = meta?.fast ?? false;
+  const unsure = contextWindow({}, model).estimated || (effort !== null && !knownEfforts(model).includes(effort)) || fast;
+  await learnCatalog(model, provider.data, unsure);
+  return ok({ model, provider: provider.data, settings: requestSettings(model, effort, fast), contextLimit: modelContextLimit(model) ?? null });
 }
 
 export const CATALOG_WAIT_MS = 5000;
 
-export async function learnContextWindow(model: string, provider: Provider): Promise<boolean> {
-  if (!contextWindow({}, model).estimated) return false;
+const reported = (model: string): boolean => catalogReported(model) || catalogLimitEntries().some(([known]) => known === model);
+
+export async function learnCatalog(model: string, provider: Provider, wait: boolean): Promise<boolean> {
+  if (reported(model)) return false;
+  const fetched = prefetchContextLimits(provider);
+  if (!wait) { void fetched; return false; }
   let wake = (): void => undefined;
   const deadline = new Promise<void>(done => { wake = done; });
   const timer = setTimeout(() => wake(), CATALOG_WAIT_MS);
-  await Promise.race([prefetchContextLimits(provider), deadline]);
+  await Promise.race([fetched, deadline]);
   clearTimeout(timer);
-  return !contextWindow({}, model).estimated;
+  return reported(model);
 }
 
-const EFFORTS: Effort[] = ["low", "medium", "high", "xhigh", "max"];
-
 export function requestSettings(model: string, effort: string | null, fast: boolean): RequestSettings | null {
-  const level = EFFORTS.find(e => e === effort);
+  const level = knownEfforts(model).find(e => e === effort);
   const wanted: RequestSettings = { ...(level !== undefined ? { effort: level } : {}), ...(fast ? { fast: true } : {}) };
   const checked = validateSettings(model, wanted);
   if (checked.ok) return Object.keys(checked.data).length > 0 ? checked.data : null;

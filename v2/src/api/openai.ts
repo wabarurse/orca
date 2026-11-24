@@ -12,7 +12,7 @@ import type { ContentBlock, ContentBlockParam, MessageParam, Tool as ApiTool } f
 import type { codexCredentials, CodexTokens } from "./auth";
 import type { Provider, Turn } from "./provider";
 import { rememberCatalogLimits } from "./model";
-import { codexCatalogEfforts, rememberCatalogEfforts } from "./model";
+import { codexCatalogEfforts, codexCatalogFast, rememberCatalogEfforts, rememberCatalogFast } from "./model";
 import { fail, ok, type Result } from "../config";
 
 export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
@@ -20,10 +20,11 @@ export const CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 export const CODEX_CLIENT_VERSION = "0.154.0";
 type CodexInputItem = ResponseInputItem | Omit<ResponseOutputMessage, "id">;
 type CodexStreamEvent = ResponseStreamEvent | (Omit<ResponseCompletedEvent, "type"> & { type: "response.done" });
+const wireEffort = z.custom<NonNullable<NonNullable<ResponseCreateParamsStreaming["reasoning"]>["effort"]>>(value => typeof value === "string" && value.length > 0);
 type CodexRequestBody = Omit<ResponseCreateParamsStreaming, "input"> & { input: CodexInputItem[] };
 const codexReasoning = z.object({ provider: z.literal("codex"), id: z.string(), encrypted_content: z.string() });
 const catalogShape = z.object({ models: z.array(z.unknown()) });
-const catalogModel = z.object({ slug: z.string(), visibility: z.unknown().optional(), priority: z.unknown().optional(), context_window: z.unknown().optional(), supported_reasoning_levels: z.unknown().optional() });
+const catalogModel = z.object({ slug: z.string(), visibility: z.unknown().optional(), priority: z.unknown().optional(), context_window: z.unknown().optional(), supported_reasoning_levels: z.unknown().optional(), service_tiers: z.unknown().optional(), additional_speed_tiers: z.unknown().optional() });
 const cacheUsage = z.object({ cached_tokens: z.number().optional(), cache_write_tokens: z.number().optional() });
 
 function reasoningItem(signature: string): CodexInputItem | undefined {
@@ -195,6 +196,7 @@ export function openai(credentials: ReturnType<typeof codexCredentials>, options
       });
       rememberCatalogLimits(models.map((model) => [model.slug, model.context_window]));
       rememberCatalogEfforts(models.map((model) => [model.slug, codexCatalogEfforts(model.supported_reasoning_levels)]));
+      rememberCatalogFast(models.map((model) => [model.slug, codexCatalogFast(model.service_tiers, model.additional_speed_tiers)]));
       const priority = (value: unknown): number => typeof value === "number" ? value : 0;
       return models.filter((model) => model.visibility !== "hide")
         .sort((a, b) => priority(a.priority) - priority(b.priority)).map((model) => model.slug);
@@ -206,7 +208,7 @@ export function codexRequestSettings(model: string, settings: RequestSettings = 
   const checked = validateSettings(model, settings);
   if (!checked.ok) throw new Error(checked.error);
   return {
-    reasoning: { summary: "auto", ...(settings.effort !== undefined ? { effort: settings.effort } : {}) },
+    reasoning: { summary: "auto", ...(settings.effort !== undefined ? { effort: wireEffort.parse(settings.effort) } : {}) },
     ...(settings.fast === true ? { service_tier: "priority" } : {}),
   };
 }
