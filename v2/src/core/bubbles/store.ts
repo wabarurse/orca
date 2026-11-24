@@ -120,14 +120,15 @@ export async function setBubbleDirectory(id: string, directory: string): Promise
   return ok(next);
 }
 
-export async function setBubblePlugin(id: string, plugin: string, state: "on" | "off" | null): Promise<Result<Bubble>> {
+export async function setBubblePlugin(id: string, plugin: string | readonly string[], state: "on" | "off" | null): Promise<Result<Bubble>> {
   if (!ID.test(id)) return fail(`invalid bubble id ${JSON.stringify(id)}`);
   return withStorageLock(join(bubbleDir(id), ".plugins-lock"), async (): Promise<Result<Bubble>> => {
     const bubble = await readBubble(id);
     if (bubble === null) return fail(`no bubble ${id}`);
-    const on = bubble.plugins.on.filter(name => name !== plugin), off = bubble.plugins.off.filter(name => name !== plugin);
-    if (state === "on") on.push(plugin);
-    if (state === "off") off.push(plugin);
+    const names = typeof plugin === "string" ? [plugin] : plugin;
+    const on = bubble.plugins.on.filter(name => !names.includes(name)), off = bubble.plugins.off.filter(name => !names.includes(name));
+    if (state === "on") on.push(...names);
+    if (state === "off") off.push(...names);
     const next = { ...bubble, plugins: { on, off } };
     await writeBubble(next);
     return ok(next);

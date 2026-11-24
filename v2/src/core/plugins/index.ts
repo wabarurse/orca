@@ -7,3 +7,5 @@ export { writeAtomic } from "../conversations";
 export { withStorageLock } from "../lock";
 export { exec, launchCommand, which, type Answer, type LaunchCommand } from "../runner/launch";
 export { readViewer, type Viewer } from "../viewer";
+
+export { pluginSettings } from "./settings";
