@@ -5,10 +5,8 @@ import { removeConversation, renameConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
 import { ensureDaemon, say, stopDaemon } from "../core/daemon/client";
 import { runHeadless } from "../core/headless";
-import { registerBuiltins } from "../core/plugins";
 import { agentProcess } from "../core/process/agent";
 import { setTrust } from "../core/trust";
-import { BUILTINS } from "../plugins";
 import { runAccounts, runLogin } from "./login";
 import { runMcp } from "./mcp";
 import { PLUGIN_USAGE, runPlugin } from "./plugin";
@@ -65,7 +63,6 @@ function refuse(error: string): number {
 }
 
 export async function main(argv: string[]): Promise<number> {
-  registerBuiltins(BUILTINS);
   const [command, ...args] = argv;
   if (command === "-p" || command === "--print") {
     const prompt = args[0];

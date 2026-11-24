@@ -90,15 +90,17 @@ export async function checkPlugin(args: string[], out: Out): Promise<number> {
       const config = join(home, "tsconfig.json");
       await writeFile(config, JSON.stringify({ compilerOptions: { lib: ["ESNext"], target: "ESNext", module: "Preserve", moduleResolution: "bundler", strict: true, noEmit: true, skipLibCheck: true,
         noUncheckedIndexedAccess: true, allowImportingTsExtensions: true, verbatimModuleSyntax: true, types: ["bun"], typeRoots: [join(APP_ROOT, "node_modules", "@types")],
-        paths: { "orca2/plugin": [join(APP_ROOT, "src/core/plugins/api.ts")] } }, include: [join(dir, "**/*.ts"), join(APP_ROOT, "src/md.d.ts")] }));
+        paths: { "orca2/plugin": [join(APP_ROOT, "src/core/plugins/api.ts")], "orca2/plugin/testing": [join(APP_ROOT, "src/core/plugins/api-testing.ts")] } }, include: [join(dir, "**/*.ts"), join(APP_ROOT, "src/md.d.ts")] }));
       const result = await run([process.execPath.endsWith("bun") ? process.execPath : Bun.which("bun") ?? process.execPath, tsc, "-p", config], dir, { ...process.env, ORCA2_HOME: home });
       if (result.code === 0) out("ok   types\n"); else fail(`types:\n${result.out}`);
     } else out("skip types (no TypeScript next to this orca2)\n");
     const tests = (await readdir(dir, { recursive: true })).filter(file => String(file).endsWith(".test.ts") && !String(file).includes("node_modules"));
     const bun = process.execPath.endsWith("bun") ? process.execPath : Bun.which("bun");
+    const preload = join(APP_ROOT, "src/core/plugins/preload.ts");
     if (tests.length > 0 && bun === null) out("skip tests (bun is not on PATH)\n");
+    else if (tests.length > 0 && !existsSync(preload)) out("skip tests (no orca2 source next to this orca2)\n");
     else if (tests.length > 0 && bun !== null) {
-      const result = await run([bun, "test", ...tests.map(file => `./${String(file)}`)], dir, { ...process.env, ORCA2_HOME: home });
+      const result = await run([bun, "test", "--preload", preload, ...tests.map(file => `./${String(file)}`)], dir, { ...process.env, ORCA2_HOME: home });
       if (result.code === 0) out(`ok   tests (${tests.length} file${tests.length === 1 ? "" : "s"})\n`); else fail(`tests:\n${result.out}`);
     } else out("note no tests (add <name>.test.ts beside index.ts)\n");
   } finally {

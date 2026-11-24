@@ -1,4 +1,4 @@
-import { defineBackground, type PluginBackground } from "../../core/plugins";
+import { defineBackground, type PluginBackground } from "orca2/plugin";
 import { readPins, shownPins, writePins } from "./store";
 
 const background: PluginBackground = defineBackground({

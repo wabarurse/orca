@@ -1,1 +1,2 @@
-{ "compilerOptions": { "lib": ["ESNext"], "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "noEmit": true, "skipLibCheck": true, "strict": true, "types": ["bun"] } }
+{ "compilerOptions": { "lib": ["ESNext"], "target": "ESNext", "module": "Preserve", "moduleResolution": "bundler", "noEmit": true, "skipLibCheck": true, "strict": true, "types": ["bun"],
+  "paths": { "orca2/plugin": ["./src/core/plugins/api.ts"], "orca2/plugin/testing": ["./src/core/plugins/api-testing.ts"] } } }

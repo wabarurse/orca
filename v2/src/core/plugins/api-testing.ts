@@ -1,0 +1,11 @@
+export { item, pluginContext, present, recordingHost, toolContext, unwrap, type HostAnswers, type RecordingHost } from "./testing";
+export { backgroundContext } from "./context";
+export { registerBuiltins, type BuiltinPlugin } from "./loader";
+export { pluginData } from "../bubbles";
+export { createConversation } from "../conversations";
+export { saveImage } from "../images";
+export { archiveDue, purgeExpired } from "../retention";
+export { shelfEntry } from "../shelf";
+export { saveConfig } from "../../config";
+export { tempHome } from "../../test/home";
+export { png } from "../../test/image-fixture";

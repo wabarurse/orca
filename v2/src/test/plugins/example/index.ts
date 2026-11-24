@@ -1,6 +1,5 @@
 import { join } from "node:path";
-import { z } from "zod";
-import { defineEvent, definePlugin, defineService, type Links, type Plugin } from "../../core/plugins";
+import { z, defineEvent, definePlugin, defineService, type Links, type Plugin } from "orca2/plugin";
 import { readPins, shownPins, writePins } from "./store";
 
 const MAX = 200;

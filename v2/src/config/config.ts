@@ -32,7 +32,7 @@ export const defaults: Config = {
   toolConcurrency: 4,
   maxToolResultBytes: 16 * 1024,
   maxToolOutputBytes: 64 * 1024 * 1024,
-  plugins: ["images", "pr-watch", "processes", "questions", "rex", "sandbox", "tasks", "tmux"],
+  plugins: [],
   approved: [],
   untrusted: [],
   runner: "plain",
