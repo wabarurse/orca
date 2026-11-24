@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import type { AgentEvent, OpenSpan } from "../core/types";
-import { CORE_FOLDS, items, tail, type Piece } from "./view";
+import { CORE_FOLDS, items, tail, USER_ROWS, userItem, type Piece } from "./view";
 
 const NOW = Date.parse("2026-01-01T00:10:00.000Z");
 const at = (secondsAgo: number): string => new Date(NOW - secondsAgo * 1000).toISOString();
@@ -48,4 +48,14 @@ test("one step's calls collapse together, whatever the tools, and a single call 
   expect(titles([call("a", "bash", { command: "ls" }, "x"), call("b", "subagent", { action: "spawn", branch: "fix" }, "worker-fix started (bundle worker, log l)")]))
     .toEqual(["⚒ 2 tool calls · bash ×1, subagent ×1", "+ 1 agent"]);
   expect(titles([call("a", "memory", { action: "write" }, "wrote")])).toEqual(["⚒ 1 tool call · memory ×1"]);
+});
+
+test("a long user message shows its first lines and how many more, all of them once opened", () => {
+  const text = Array.from({ length: 25 }, (_, i) => `line ${i}`).join("\n");
+  const shut = userItem(text, "p-0", { cols: 80, open: new Set() });
+  expect(shut.kind === "user" ? [shut.rows.length, shut.more, shut.open] : null).toEqual([USER_ROWS, 15, false]);
+  const opened = userItem(text, "p-0", { cols: 80, open: new Set(["p-0"]) });
+  expect(opened.kind === "user" ? [opened.rows.length, opened.more, opened.open] : null).toEqual([25, 15, true]);
+  const short = userItem("hello", "p-1", { cols: 80, open: new Set(["p-1"]) });
+  expect(short.kind === "user" ? [short.rows, short.more, short.open] : null).toEqual([["hello"], 0, false]);
 });

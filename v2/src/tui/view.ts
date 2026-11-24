@@ -4,7 +4,7 @@ import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolvie
 import { clock, phaseText } from "../core/spans";
 import type { AgentEvent, Entry, OpenSpan, ToolCall, ToolOutcome } from "../core/types";
 import { z } from "zod";
-import { dim, editor, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
+import { dim, editor, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
@@ -76,6 +76,16 @@ export const CORE_FOLDS: ReadonlyMap<string, Fold> = new Map<string, Fold>([["su
   opens: "agents",
 }]]);
 
+export const USER_ROWS = 10;
+
+export function userItem(text: string, key: string, state: { cols: number; open: Set<string> }): Item {
+  const width = Math.max(10, Math.floor(state.cols * 0.78) - 4);
+  const rows = text.split(/\r\n?|\n/).flatMap(line => { const wrapped = wordWrap(sanitize(expandTabs(line)), width); return wrapped.length > 0 ? wrapped : [""]; });
+  const more = Math.max(0, rows.length - USER_ROWS);
+  const open = more > 0 && state.open.has(key);
+  return { kind: "user", key, gap: true, rows: more > 0 && !open ? rows.slice(0, USER_ROWS) : rows, fill: userFill(), open, more };
+}
+
 export function items(list: Piece[], state: ViewState): Item[] {
   const out: Item[] = [];
   const width = Math.max(10, state.cols - 2);
@@ -106,7 +116,7 @@ export function items(list: Piece[], state: ViewState): Item[] {
     if (piece.kind === "call") { run.push(piece.call); return; }
     flush();
     const key = `p-${index}`;
-    if (piece.kind === "user") out.push({ kind: "user", key, gap: true, rows: wordWrap(sanitize(piece.text), Math.max(10, Math.floor(state.cols * 0.78) - 4)), fill: userFill() });
+    if (piece.kind === "user") out.push(userItem(piece.text, key, state));
     else if (piece.kind === "text") out.push({ kind: "rows", key, gap: true, rows: renderMarkdown(piece.text, width) });
     else if (piece.kind === "from") out.push({ kind: "fold", key, gap: true, title: `${FROM_MARK} from agent ${piece.from}`, failed: "", open: state.open.has(key), rows: renderMarkdown(piece.text, width - 2), opens: null });
     else out.push({ kind: "rows", key, gap: true, rows: [dim(fit(`· ${sanitize(piece.text)}`, width))] });

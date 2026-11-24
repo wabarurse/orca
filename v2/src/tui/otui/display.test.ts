@@ -64,3 +64,21 @@ test("any update to the chat brings it back to the bottom, even after scrolling 
   expect(setup.captureCharFrame()).not.toContain("streaming");
   await setup.dispose();
 });
+
+test("a capped user message has a row that asks to open it", async () => {
+  const setup = await createTestRenderer({ width: 60, height: 30 });
+  const actions: screens.ScreenAction[] = [];
+  const display = new Display(setup.renderer, action => { actions.push(action); }, () => {});
+  const user: screens.ScreenItem = { kind: "user", key: "p-0", gap: false, rows: ["first", "second"], fill: null, open: false, more: 7 };
+  display.show({ ...chat([]), items: [user] });
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame().split("\n");
+  const y = frame.findIndex(line => line.includes("7 more lines"));
+  expect(y).toBeGreaterThanOrEqual(0);
+  await setup.mockMouse.click((frame[y] ?? "").indexOf("7 more"), y);
+  expect(actions).toContainEqual({ kind: "toggle", key: "p-0" });
+  display.show({ ...chat([]), items: [{ ...user, open: true }] });
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("show less");
+  await setup.dispose();
+});
