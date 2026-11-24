@@ -27,7 +27,7 @@ import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
-import { composerRows, items, pieces, tail } from "./view";
+import { composerRows, items, pieces, tail, userItem } from "./view";
 import { renderWork, type WorkTab } from "./work";
 import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
 
@@ -822,7 +822,7 @@ export class App {
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}${this.settings}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
-    const sent = this.busy ? [] : this.queued.flatMap(m => items([{ kind: "user", text: m.text }], { cols, open: this.open, folds: this.folds }).map(item => ({ ...item, key: `sent-${m.id}` })));
+    const sent = this.busy ? [] : this.queued.map(m => userItem(m.text, `sent-${m.id}`, { cols, open: this.open }));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
       updates: this.events.length, welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }

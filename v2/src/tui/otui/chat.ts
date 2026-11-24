@@ -73,7 +73,7 @@ const sameRows = (a: string[], b: string[]): boolean => a === b || (a.length ===
 
 function sameItem(a: screens.ScreenItem, b: screens.ScreenItem): boolean {
   if (a.kind !== b.kind || a.key !== b.key || a.gap !== b.gap || !sameRows(a.rows, b.rows)) return false;
-  if (a.kind === "user" && b.kind === "user") return a.fill === b.fill;
+  if (a.kind === "user" && b.kind === "user") return a.fill === b.fill && a.open === b.open && a.more === b.more;
   if (a.kind !== "fold" || b.kind !== "fold") return true;
   return a.title === b.title && a.failed === b.failed && a.open === b.open && a.opens === b.opens;
 }
@@ -203,7 +203,7 @@ export class ChatView {
   private build(item: screens.ScreenItem): BoxRenderable {
     const box = new BoxRenderable(this.ctx, { flexDirection: "column", marginTop: item.gap ? 1 : 0, flexShrink: 0 });
     if (item.kind === "rows") box.add(this.rows(item.rows));
-    else if (item.kind === "user") box.add(this.user(item.rows, item.fill));
+    else if (item.kind === "user") box.add(this.user(item));
     else box.add(this.fold(item));
     return box;
   }
@@ -232,10 +232,17 @@ export class ChatView {
     return text;
   }
 
-  private user(rows: string[], fill: string | null): BoxRenderable {
+  private user(item: Extract<screens.ScreenItem, { kind: "user" }>): BoxRenderable {
     const line = new BoxRenderable(this.ctx, { flexDirection: "row", justifyContent: "flex-end", marginY: 1, flexShrink: 0 });
-    const block = new BoxRenderable(this.ctx, { backgroundColor: fillColour(fill) ?? COLOURS.surface, paddingX: 2, paddingY: 1, width: "78%", flexShrink: 0 });
-    block.add(new TextRenderable(this.ctx, { content: rows.join("\n"), fg: COLOURS.text, wrapMode: "word", selectable: true }));
+    const block = new BoxRenderable(this.ctx, { backgroundColor: fillColour(item.fill) ?? COLOURS.surface, paddingX: 2, paddingY: 1, width: "78%", flexShrink: 0 });
+    block.add(new TextRenderable(this.ctx, { content: item.rows.join("\n"), fg: COLOURS.text, wrapMode: "word", selectable: true }));
+    if (item.more > 0) {
+      const label = item.open ? "▾ show less" : `▸ ${item.more} more line${item.more === 1 ? "" : "s"}`;
+      const toggle = new TextRenderable(this.ctx, { content: styled([chunk(label, COLOURS.muted)]), wrapMode: "none" });
+      toggle.onMouseDown = (event: MouseEvent) => { this.pressed = { x: event.x, y: event.y }; };
+      toggle.onMouseUp = (event: MouseEvent) => { this.click(event, () => { this.events.action({ kind: "toggle", key: item.key }); }); };
+      block.add(toggle);
+    }
     line.add(block);
     return line;
   }

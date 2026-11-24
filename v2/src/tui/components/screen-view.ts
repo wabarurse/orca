@@ -2,7 +2,7 @@ export type OpenTab = string;
 
 export type ScreenItem =
   | { kind: "rows"; key: string; gap: boolean; rows: string[] }
-  | { kind: "user"; key: string; gap: boolean; rows: string[]; fill: string | null }
+  | { kind: "user"; key: string; gap: boolean; rows: string[]; fill: string | null; open: boolean; more: number }
   | { kind: "fold"; key: string; gap: boolean; title: string; failed: string; open: boolean; rows: string[]; opens: OpenTab | null };
 
 export type ScreenTab = { label: string; active: boolean; busy: boolean };
