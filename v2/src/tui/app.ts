@@ -11,6 +11,7 @@ import { removeConversation, renameConversation } from "../core/lifecycle";
 import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
+import { readInputHistory, recordInput, remember } from "../core/input-history";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
@@ -27,7 +28,8 @@ import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
-import { composerRows, items, pieces, tail, userItem } from "./view";
+import { composerRows, composerWidth, items, pieces, tail, userItem } from "./view";
+import { browsing, newer, older, onRecalled, sinceClear, type Browse, type Step } from "./history";
 import { renderWork, type WorkTab } from "./work";
 import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
 
@@ -71,6 +73,8 @@ export class App {
   private busy = false;
   private waiting: OpenSpan | null = null;
   private composer: editor.EditState = { text: "", cursor: 0 };
+  private history: Browse = browsing([]);
+  private cleared = new Map<string, string | null>();
   private images: string[] = [];
   private queued: Message[] = [];
   private confirms: Confirm[] = [];
@@ -155,6 +159,7 @@ export class App {
     this.events = [];
     this.liveTurn = -1;
     this.page = null;
+    this.history = browsing(await readInputHistory(conversation.id).catch((): string[] => []));
     const loaded = await loadUis(conversation.id);
     this.uis = loaded.uis;
     this.folds = loaded.folds;
@@ -170,7 +175,7 @@ export class App {
     this.transcript.refresh();
     if (this.transcript.head() !== this.head) {
       this.head = this.transcript.head();
-      const all = this.transcript.all();
+      const all = sinceClear(this.transcript.all(), this.cleared.get(id) ?? null);
       const list = pieces(all);
       this.cached = items(list, { cols: this.deps.terminal.cols, open: this.open, folds: this.folds });
       const last = [...list].reverse().find(p => p.kind === "text");
@@ -281,7 +286,7 @@ export class App {
     this.note = "";
     const id = this.conversation.id;
     if (key.ctrl === true) {
-      if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) this.composer = { text: "", cursor: 0 }; else this.flash("Ctrl+D quits"); }
+      if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) { this.composer = { text: "", cursor: 0 }; this.history = browsing(this.history.entries); } else this.flash("Ctrl+D quits"); }
       else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
       else if (key.name === "a") await this.openPage(0);
       else if (key.name === "n") await this.newConversation();
@@ -305,9 +310,34 @@ export class App {
       case "escape": if (this.signing !== null) this.signing.controller.abort(); else await this.takeBack(); break;
       case "pageup": case "wheelup": this.deps.terminal.scroll(key.name === "pageup" ? "page-up" : "up"); break;
       case "pagedown": case "wheeldown": this.deps.terminal.scroll(key.name === "pagedown" ? "page-down" : "down"); break;
+      case "up": case "down": this.recall(key.name === "up" ? -1 : 1); break;
       default: this.composer = edit(this.composer, key);
     }
     this.draw();
+  }
+
+  private recall(dir: -1 | 1): void {
+    const moved = onRecalled(this.history, this.composer) ? null : editor.vertical(this.composer, composerWidth("› ", this.deps.terminal.cols), dir);
+    if (moved !== null) { this.composer = moved; return; }
+    const step: Step | null = dir === -1 ? older(this.history, this.composer) : newer(this.history);
+    if (step === null) return;
+    this.history = step.browse;
+    this.composer = step.state;
+  }
+
+  private clearChat(): void {
+    const id = this.conversation.id;
+    this.transcript.refresh();
+    this.cleared.set(id, this.transcript.head());
+    this.head = "unset";
+    this.flash("chat view cleared; the transcript, memory and agent context are unchanged, and a restart shows it again");
+  }
+
+  private async remember(text: string): Promise<void> {
+    const id = this.conversation.id;
+    this.history = browsing(remember(this.history.entries, text));
+    const saved = await recordInput(id, text).catch(() => null);
+    if (saved !== null && this.conversation.id === id && this.history.at === null) this.history = browsing(saved);
   }
 
   private modalKey(modal: Modal, key: Key): void {
@@ -334,6 +364,8 @@ export class App {
     const text = this.composer.text.trim();
     if (text.length === 0 && this.images.length === 0) return;
     this.composer = { text: "", cursor: 0 };
+    if (text.length > 0) await this.remember(text);
+    else this.history = browsing(this.history.entries);
     if (text.startsWith("/")) { await this.command(text); return; }
     await say(this.conversation.id, text, this.images, delivery);
     this.images = [];
@@ -347,6 +379,7 @@ export class App {
     const message = await unsay(this.conversation.id, last.id);
     if (message === null) return;
     this.composer = { text: message.text, cursor: message.text.length };
+    this.history = browsing(this.history.entries);
     this.images = message.images;
     await this.poll();
   }
@@ -455,9 +488,10 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ↑/↓ earlier input · /rename · /close · /clear-chat · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
+    if (name === "clear-chat") { this.clearChat(); return; }
     if (name === "close") { await this.closeTab(); return; }
     if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
     if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }

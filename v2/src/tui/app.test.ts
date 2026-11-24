@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadConfig, saveConfig } from "../config";
+import { loadConfig, paths, saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { writeStatus } from "../core/daemon/channel";
 import { ensureBubble, readBubble, setBubbleDirectory } from "../core/bubbles";
@@ -10,6 +10,7 @@ import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
+import { openTranscript } from "../core/transcript";
 import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
 import { App } from "./app";
@@ -168,6 +169,51 @@ describe("tui", () => {
     await t.press({ name: "char", text: "y" });
     expect(await answer).toBe(true);
     expect(await pendingConfirms(id)).toEqual([]);
+    t.app.stop();
+  });
+
+  test("Up/Down recall earlier input (messages and commands) like a shell, keep the draft, and move between lines of a multi-line draft first", async () => {
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-history-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    const composer = (): string => t.text().split("\n").filter(line => line.includes("› ")).join("\n");
+    await t.type("one");
+    await t.press({ name: "enter" });
+    await t.type("/nope");
+    await t.press({ name: "enter" });
+    await t.type("draft");
+    await t.press({ name: "up" });
+    expect(composer()).toContain("› /nope");
+    await t.press({ name: "up" });
+    expect(composer()).toContain("› one");
+    await t.press({ name: "down" }, { name: "down" });
+    expect(composer()).toContain("› draft");
+    await t.press({ name: "enter", shift: true }, { name: "char", text: "x" }, { name: "up" });
+    expect(composer()).toContain("› draft");
+    await t.press({ name: "char", text: "!" });
+    expect(composer()).toContain("› d!raft");
+    t.app.stop();
+  });
+
+  test("/clear-chat empties the chat view only; the transcript stays and new messages show", async () => {
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-clear-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    const id = t.app.conversationId();
+    const transcript = openTranscript(paths.transcript(id, "orchestrator"));
+    await transcript.append({ type: "message", inbox: [], message: { role: "assistant", content: "before the clear" } });
+    await t.app.poll();
+    expect(await t.shows("before the clear")).toContain("before the clear");
+    await t.type("/clear-chat");
+    await t.press({ name: "enter" });
+    await t.app.poll();
+    expect(t.text()).not.toContain("before the clear");
+    await transcript.append({ type: "message", inbox: [], message: { role: "assistant", content: "after the clear" } });
+    await t.app.poll();
+    expect(await t.shows("after the clear")).not.toContain("before the clear");
+    transcript.refresh();
+    expect(transcript.all().length).toBe(2);
+    expect(await pending(id, "orchestrator")).toEqual([]);
     t.app.stop();
   });
 
