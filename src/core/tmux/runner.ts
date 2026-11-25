@@ -13,7 +13,8 @@ import { command, run } from "../proc";
 import { existsSync, mkdirSync, lstatSync } from "node:fs";
 import { basename, resolve, dirname } from "node:path";
 import { $ } from "bun";
-import { paths, repositoryBinding } from "../../config";
+import { loadConfig, paths, repositoryBinding } from "../../config";
+import { rexBinary, rexInUse, rexMux } from "./rex";
 import { assertWorktree, workspaces } from "../data/projects";
 import { execution } from "../data/projects/lifecycle";
 import { launchEnvironment } from "./launch-environment";
@@ -287,6 +288,50 @@ export const tmux = {
   },
 };
 
+// --- mux ---------------------------------------------------------------------
+
+/** A Rex block id (rex.ts), as opposed to a tmux pane id ("%12"). */
+const isBlock = (pane: string) => pane.startsWith("block:");
+/** One backend's answer, [] when it is not installed (or, for Rex, never used): it runs nothing of orca's. */
+const either = async <T>(installed: boolean, ask: () => Promise<T[] | null>): Promise<T[] | null> => installed ? ask() : [];
+/** Both backends' answers together, null when either could not be asked. */
+const both = async <T>(ask: (m: typeof tmux | typeof rexMux) => Promise<T[] | null>): Promise<T[] | null> => {
+  const [t, r] = await Promise.all([either(!!Bun.which("tmux"), () => ask(tmux)), either(rexInUse(), () => ask(rexMux))]);
+  return t && r && [...t, ...r];
+};
+
+/**
+ * The multiplexer agents run in. New launches go to the one config.toml names (`mux`, /mux); everything that looks
+ * at or ends agents asks both, so an agent started before a switch is still seen, watched and stopped. A pane id
+ * says which one holds it.
+ */
+export const mux = {
+  /** Whether Rex is installed here, so it can be chosen. */
+  rexInstalled: () => rexBinary() !== null,
+  /** The backend new agents start in. */
+  async selected(): Promise<typeof tmux | typeof rexMux> {
+    if ((await loadConfig()).mux === "rex") return rexMux;
+    need("tmux");
+    return tmux;
+  },
+  pane: (pane: string, signal?: AbortSignal) => isBlock(pane) ? rexMux.pane(pane, signal) : tmux.pane(pane, signal),
+  /** Rex blocks always keep their screen after exit (--keep-open); their next launch closes them. */
+  keepOnExit: async (pane: string, on: boolean, signal?: AbortSignal) => { if (!isBlock(pane)) await tmux.keepOnExit(pane, on, signal); },
+  capturePane: async (pane: string, signal?: AbortSignal) => isBlock(pane) ? tail(await rexMux.capture(pane, signal)) : tmux.capturePane(pane, signal),
+  killPane: (pane: string) => isBlock(pane) ? rexMux.killPane(pane) : tmux.killPane(pane),
+  windows: (session: string, signal?: AbortSignal) => both(m => m.windows(session, signal)),
+  listWindows: async (session: string) => (await mux.windows(session)) ?? [],
+  agentPanes: (session: string, signal?: AbortSignal) => both(m => m.agentPanes(session, signal)),
+  async killWindow(session: string, name: string): Promise<void> {
+    if (Bun.which("tmux")) await tmux.killWindow(session, name);
+    if (rexInUse()) await rexMux.killWindow(session, name);
+  },
+  async killSession(session: string): Promise<void> {
+    if (Bun.which("tmux")) await tmux.killSession(session);
+    if (rexInUse()) await rexMux.killSession(session);
+  },
+};
+
 // --- runner ------------------------------------------------------------------
 
 /** Exit code of an agent whose run is already closed (its crash notice went out, or it ended on a report); the follow-up skips it. */
@@ -352,8 +397,8 @@ export class LaunchFailed extends Error {
 
 /** The pane is confirmed (or given up on): stop keeping it after exit; a pane that already died is removed. */
 async function settlePane(pane: string, state: PaneState | null, signal?: AbortSignal): Promise<void> {
-  if (state && !state.dead) await tmux.keepOnExit(pane, false, signal);
-  else if (state) await tmux.killPane(pane);
+  if (state && !state.dead) await mux.keepOnExit(pane, false, signal);
+  else if (state) await mux.killPane(pane);
 }
 
 /**
@@ -363,8 +408,8 @@ async function settlePane(pane: string, state: PaneState | null, signal?: AbortS
  */
 async function failLaunch(project: string, id: string, run: string, pane: string, state: PaneState | null, signal?: AbortSignal): Promise<never> {
   const reported = await claim(project, id, run).catch(() => false);
-  const output = state ? await tmux.capturePane(pane, signal) : "";
-  if (state) await tmux.killPane(pane);
+  const output = state ? await mux.capturePane(pane, signal) : "";
+  if (state) await mux.killPane(pane);
   throw new LaunchFailed(id, state, output, reported);
 }
 
@@ -372,7 +417,7 @@ async function failLaunch(project: string, id: string, run: string, pane: string
 async function observeLaunch(project: string, id: string, run: string, pane: string, supervised: boolean, signal?: AbortSignal): Promise<{ up: boolean; state: PaneState | null }> {
   const started = async () => supervised && (await readRun(project, id))?.run === run;
   let up = await started();
-  const state = await tmux.pane(pane, signal);
+  const state = await mux.pane(pane, signal);
   if (!up && (!state || state.dead)) up = await started(); // it may have begun and died between the two reads
   return { up, state };
 }
@@ -405,7 +450,7 @@ export async function confirmLaunch(project: string, id: string, run: string, pa
   } catch (error) {
     if (error instanceof LaunchFailed) throw error;
     await claim(project, id, run).catch(() => false);
-    await tmux.killPane(pane).catch(() => {});
+    await mux.killPane(pane).catch(() => {});
     throw error;
   }
 }
@@ -414,7 +459,7 @@ export const local: Runner = {
   async start(opts) {
     const epoch = opts.executionEpoch ?? execution.epoch(opts.project);
     execution.assertActive(opts.project, epoch);
-    need("tmux");
+    const backend = await mux.selected();
     if (opts.role !== "orchestrator" && !opts.branch) throw new Error("workers and reviewers require a task branch");
     if (opts.role === "orchestrator" && opts.branch) throw new Error("the orchestrator runs in the original checkout, without a task branch");
     let cwd: string;
@@ -425,8 +470,8 @@ export const local: Runner = {
       if (!existsSync(cwd)) throw new Error(`runner: repo not found at ${cwd}`);
     }
     const session = sessionName(opts.project);
-    await tmux.ensureSession(session, paths.repo(opts.project), opts.signal);
-    await tmux.checkServer(opts.signal);
+    await backend.ensureSession(session, paths.repo(opts.project), opts.signal);
+    await backend.checkServer(opts.signal);
     const id = sessionId(opts.role, opts.branch);
     workspaces.own(opts.project, "agent", id, { directory: cwd, exclusive: true });
     const run = opts.run ?? crypto.randomUUID();
@@ -434,22 +479,22 @@ export const local: Runner = {
     const launch = await launchEnvironment(opts.project, agentCommand(opts, run));
     let pane: string;
     execution.assertActive(opts.project, epoch);
-    try { pane = await tmux.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
+    try { pane = await backend.openWindow(session, windowName(opts.role, opts.branch), cwd, launch.argv, opts.signal); }
     catch (error) { await launch.cleanup(); throw error; }
     await confirmLaunch(opts.project, id, run, pane, true, opts.signal);
   },
 
   async stop(project, branch) {
     const session = sessionName(project);
-    for (const name of await tmux.listWindows(session)) {
-      if (name.endsWith(`-${slug(branch)}`)) await tmux.killWindow(session, name);
+    for (const name of await mux.listWindows(session)) {
+      if (name.endsWith(`-${slug(branch)}`)) await mux.killWindow(session, name);
     }
     await removeWorktree(project, branch);
   },
 
   async running(project, ids, signal) {
     signal?.throwIfAborted();
-    const panes = await tmux.agentPanes(sessionName(project), signal);
+    const panes = await mux.agentPanes(sessionName(project), signal);
     if (panes === null) return null;
     const live = new Map<string, boolean>();
     for (const pane of panes) live.set(pane.name, live.get(pane.name) === true || pane.live);

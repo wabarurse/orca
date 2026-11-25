@@ -1,5 +1,5 @@
 export { Cancelled, cancelSession, delay, launchEpoch, launchIdentity, publishLaunch, takeCancellation, watchCancellation } from "./cancellation";
-export { cliCommand, local, sessionId, sessionName, SETTLED_EXIT, tmux, type Runner } from "./runner";
+export { cliCommand, local, mux, sessionId, sessionName, SETTLED_EXIT, type Runner } from "./runner";
 export { ABANDONED, claim, dirtyCount, markEnded, noticeText, readRun, sendNotice, supervise, type RunInfo, type Tracker } from "./exits";
 export { archiveAgents, restoreAgents, exitWatchdog, killProjectSession, listAgents, liveAgents, liveAgentsOrNull, mergeWatch } from "./liveness";
 export { type ModelRequestState } from './exits';

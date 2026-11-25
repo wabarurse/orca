@@ -24,7 +24,12 @@ export interface Config {
   maxToolResultBytes: number;
   /** Projects pinned to the top of the TUI's project list. */
   pinned: string[];
+  /** The terminal multiplexer new agents start in (/mux): orca's own tmux server, or Rex when it is installed and running. */
+  mux: Mux;
 }
+
+export type Mux = "tmux" | "rex";
+export const muxes: readonly Mux[] = ["tmux", "rex"];
 
 export const defaults: Config = {
   sandbox: "off",
@@ -39,6 +44,7 @@ export const defaults: Config = {
   maxToolOutputBytes: 64 * 1024 * 1024,
   maxToolResultBytes: 16 * 1024,
   pinned: [],
+  mux: "tmux",
 };
 
 /** The last parse warning, so a broken file is reported once, not on every load. */
@@ -72,6 +78,7 @@ function withFallbacks(config: Config): Config {
   if (typeof config.smallSummaries !== "boolean") config.smallSummaries = defaults.smallSummaries;
   if (!integerWithin(config.toolConcurrency, 1, 32)) config.toolConcurrency = defaults.toolConcurrency;
   if (!integerWithin(config.maxToolResultBytes, 512, 65536)) config.maxToolResultBytes = defaults.maxToolResultBytes;
+  if (!muxes.includes(config.mux)) config.mux = defaults.mux;
   if (!integerWithin(config.maxToolOutputBytes, 1024, 256 * 1024 * 1024)) config.maxToolOutputBytes = defaults.maxToolOutputBytes;
   return config;
 }

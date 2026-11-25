@@ -293,7 +293,7 @@ test("Projects works with no conversation open; the other tabs say to open one; 
 test("only the kept commands exist; a removed one is unknown; key paths replace the rest", async () => {
   const { app, term, stop } = await setup("commands");
   try {
-    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/quit", "/rename"]);
+    expect([...app.commands.keys()].sort()).toEqual(["/accounts", "/clear-context", "/compact", "/effort", "/fast", "/help", "/login", "/model", "/mux", "/quit", "/rename"]);
     for (const gone of ["/vim", "/stop", "/paste-image", "/remove-image", "/runtime", "/usage", "/refresh", "/projects", "/retry-images", "/keys", "/new", "/close", "/tasks", "/agents", "/images", "/clear", "/project", "/project-defaults", "/questions", "/back"]) {
       term.type(`${gone}\r`);
       await until(() => term.screen().includes(`unknown command ${gone}`));

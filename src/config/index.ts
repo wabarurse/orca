@@ -1,6 +1,6 @@
 export { siblingWorktreeFolder } from "./legacy";
 export { BUILD_ID } from "./build";
-export { defaults, loadConfig, saveConfig, type Config } from "./config";
+export { defaults, loadConfig, muxes, saveConfig, type Config, type Mux } from "./config";
 export { paths, installedApp, projectStateScope, readProjectState, writeProjectState, repositoryBinding, legacyProjectIdentities, type RepositoryBinding } from "./paths";
 export { assertLayout } from './layout';
 export { readState, updateState, stateEntries } from "./state-store";
