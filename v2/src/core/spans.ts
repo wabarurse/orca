@@ -113,7 +113,7 @@ const VERB: Record<SpanKind, string> = {
 
 export const phaseText = (span: OpenSpan, now: number): string => {
   const elapsed = clock(now - Date.parse(span.startedAt));
-  return span.kind === "model" || span.kind === "prep" ? `thinking… (${elapsed})` : `${VERB[span.kind]} ${span.label} (${elapsed})`;
+  return span.kind === "model" || span.kind === "prep" ? `swimming (${elapsed})` : `${VERB[span.kind]} ${span.label} (${elapsed})`;
 };
 
 export function cut(text: string, max: number): string {

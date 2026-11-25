@@ -4,7 +4,7 @@ import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolvie
 import { clock, phaseText } from "../core/spans";
 import type { AgentEvent, Entry, OpenSpan, ToolCall, ToolOutcome } from "../core/types";
 import { z } from "zod";
-import { dim, editor, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
+import { dim, editor, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, swimming, userFill, visibleLength, wordWrap } from "./components";
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
@@ -145,8 +145,10 @@ export function tail(events: AgentEvent[], lastDurableText: string, cols: number
   });
   if (!busy) return waiting !== null && waiting.kind !== "wait-inbox" ? [...shown, dim(fit(phaseText(waiting, now), width))] : shown;
   const phase = [...open.values()].filter(span => span.kind !== "tool").at(-1) ?? null;
-  const activity = phase !== null ? [dim(shimmer(fit(phaseText(phase, now), width), now))]
-    : calls.length === 0 && shown.length === 0 ? [dim(shimmer("thinking…", now))] : [];
+  const thinking = phase !== null && (phase.kind === "model" || phase.kind === "prep");
+  const activity = thinking ? [fit(swimming(clock(now - Date.parse(phase.startedAt)), now), width)]
+    : phase !== null ? [dim(shimmer(fit(phaseText(phase, now), width), now))]
+    : calls.length === 0 && shown.length === 0 ? [fit(swimming(null, now), width)] : [];
   return [...shown, ...calls, ...activity];
 }
 
