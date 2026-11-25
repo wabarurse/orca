@@ -1,11 +1,11 @@
 import type { Entry } from "../core/types";
-import type { editor } from "./components";
+import { editor } from "./components";
 
 export type Browse = { entries: string[]; at: number | null; draft: editor.EditState };
 export type Step = { browse: Browse; state: editor.EditState };
 
-const EMPTY: editor.EditState = { text: "", cursor: 0 };
-const recalled = (text: string): editor.EditState => ({ text, cursor: text.length });
+const EMPTY: editor.EditState = editor.at("");
+const recalled = (text: string): editor.EditState => editor.at(text);
 
 export const browsing = (entries: string[]): Browse => ({ entries, at: null, draft: EMPTY });
 

@@ -94,6 +94,10 @@ class OpenTuiTerminal implements PaintingTerminal {
     return this.live === null ? "" : this.live.display.selection();
   }
 
+  copyOsc52(text: string): boolean {
+    return this.live !== null && this.live.renderer.copyToClipboardOSC52(text);
+  }
+
   async handOver(argv: string[]): Promise<number> {
     const renderer = this.live?.renderer ?? null;
     if (renderer !== null) await renderer.suspend();
@@ -128,7 +132,7 @@ class OpenTuiTerminal implements PaintingTerminal {
   }
 
   private async start(): Promise<void> {
-    const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen" });
+    const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen", useKittyKeyboard: { disambiguate: true, alternateKeys: true } });
     if (this.shut) { renderer.destroy(); return; }
     const display = new Display(renderer, action => { this.act(action); }, key => { this.emit(key); });
     renderer.keyInput.on("keypress", (event: KeyEvent) => { this.key(event); });

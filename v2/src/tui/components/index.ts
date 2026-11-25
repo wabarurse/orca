@@ -1,4 +1,4 @@
-export { readClipboardImage, writeClipboardText, type ClipboardImage } from "./clipboard";
+export { readClipboardImage, readClipboardText, writeClipboardText, type ClipboardImage } from "./clipboard";
 export { cleanPaste, type Key } from "./keys";
 export { bold, cells, dim, expandTabs, fit, LINK_CLOSE, linkOpen, plainText, RESET, sanitize, visibleLength, wordWrap, wrap } from "./text";
 export { baseText, BG_REPLY_MS, fillRow, noColour, pastel, railMark, textRow, useTerminalBackground, userFill } from "./style";
@@ -10,4 +10,5 @@ export { imageProtocol } from "./images";
 export { tabWindow } from "./tabs";
 export { renderMarkdown } from "./markdown";
 export * as editor from "./editor";
+export { TextInput, type InputClipboard, type InputRows, type MousePhase, type TextInputProps } from "./text-input";
 export { whaleRows } from "./whale";

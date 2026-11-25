@@ -36,4 +36,5 @@ export type ScreenAction =
   | { kind: "toggle"; key: string }
   | { kind: "open"; tab: OpenTab; index: number }
   | { kind: "link"; url: string }
-  | { kind: "copy"; text: string };
+  | { kind: "copy"; text: string }
+  | { kind: "input"; phase: "down" | "drag" | "up"; row: number; col: number };

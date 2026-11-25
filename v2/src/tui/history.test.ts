@@ -2,11 +2,11 @@ import { expect, test } from "bun:test";
 import type { Entry } from "../core/types";
 import { browsing, newer, older, onRecalled, sinceClear } from "./history";
 
-const at = (text: string) => ({ text, cursor: text.length });
+const at = (text: string) => ({ text, cursor: text.length, anchor: null });
 
 test("Up recalls older entries, Down newer ones, and Down past the newest restores the draft", () => {
   let b = browsing(["first", "/model", "third"]);
-  const draft = { text: "half typed", cursor: 4 };
+  const draft = { text: "half typed", cursor: 4, anchor: null };
   const one = older(b, draft);
   expect(one?.state).toEqual(at("third"));
   b = one?.browse ?? b;
