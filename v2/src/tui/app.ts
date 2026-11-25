@@ -17,7 +17,7 @@ import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
-import { chooseRunner, runnerNames, runners, stopAgent } from "../core/runner/runtime";
+import { chooseRunner, runnerNames, runners, stopAgent, stopAgents } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
@@ -49,6 +49,7 @@ export type AppDeps = {
   copy: (text: string) => Promise<Result<null>>;
   openUrl: (url: string) => Promise<Result<null>>;
   open: (path: string) => Promise<void>;
+  stopAgents: (conversation: string) => Promise<string[]>;
   exit: (code: number) => void;
 };
 
@@ -281,14 +282,13 @@ export class App {
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
 
   private async key(key: Key): Promise<void> {
+    if (key.ctrl === true && key.name === "c") { await this.kill(); return; }
     if (this.modal !== null) { this.modalKey(this.modal, key); return; }
     if (this.page !== null) { await this.pageKey(key); return; }
     this.note = "";
     const id = this.conversation.id;
     if (key.ctrl === true) {
-      if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) { this.composer = { text: "", cursor: 0 }; this.history = browsing(this.history.entries); } else this.flash("Ctrl+D quits"); }
-      else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
-      else if (key.name === "a") await this.openPage(0);
+      if (key.name === "a") await this.openPage(0);
       else if (key.name === "n") await this.newConversation();
       else if (key.name === "h" || key.name === "l") { await this.cycle(key.name === "h" ? -1 : 1); return; }
       else if (key.name === "v") await this.pasteImage();
@@ -488,7 +488,9 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ↑/↓ earlier input · /rename · /close · /clear-chat · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "kill") { await this.kill(); return; }
+    if (name === "cancel") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else this.flash("nothing is running"); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /kill stop every agent and quit · /exit quit, agents keep running · /cancel stop the turn · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ↑/↓ earlier input · /rename · /close · /clear-chat · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "clear-chat") { this.clearChat(); return; }
@@ -647,6 +649,17 @@ export class App {
     this.draw();
   }
 
+
+  private async kill(): Promise<void> {
+    if (this.quitting) return;
+    this.flash("stopping every agent, then quitting…");
+    for (const tab of this.openTabs) {
+      const status = await readStatus(tab.id).catch(() => null);
+      if (status !== null && status.state === "turn") await cancel(tab.id).catch(() => undefined);
+      await this.deps.stopAgents(tab.id).catch((): string[] => []);
+    }
+    await this.quit();
+  }
 
   private async quit(): Promise<void> {
     this.quitting = true;
@@ -914,6 +927,7 @@ export async function startTui(directory: string): Promise<number> {
       clipboard: async () => { const image = await readClipboardImage(); return image.ok ? ok(image.data.bytes) : image; },
       copy: text => writeClipboardText(text),
       openUrl,
+      stopAgents,
       open: async path => { await Bun.spawn(process.platform === "darwin" ? ["open", path] : ["xdg-open", path], { stdout: "ignore", stderr: "ignore" }).exited; },
       exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
     const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };
