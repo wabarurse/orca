@@ -17,7 +17,7 @@ const plugin: Plugin = definePlugin({
   name: "example",
   description: "Pins: short notes agents keep for the conversation (a worked example of every plugin slot).",
   tools: [{
-    roles: ["orchestrator", "worker", "reviewer"],
+    roles: ["orchestrator", "worker"],
     replaces: false,
     tool: {
       parallel: input => input.action === "list",

@@ -5,13 +5,14 @@ import { writeAtomic } from "../conversations";
 import { pidAlive } from "../lock";
 import type { AgentInfo } from "../tools/registry";
 import { z } from "zod";
+import { RoleRecord } from "../roles";
 import type { Role } from "../types";
 
 export type RunState = AgentInfo["state"];
 export type RunRecord = AgentInfo & { run: string; conversation: string; handle: string; reported: boolean; error: string | null };
 
 const RunFile = z.object({
-  agent: z.string(), role: z.enum(["orchestrator", "worker", "reviewer"]), bundle: z.string(), branch: z.string(),
+  agent: z.string(), role: RoleRecord, bundle: z.string(), branch: z.string(),
   state: z.enum(["starting", "running", "reported", "exited", "failed", "stopped"]), pid: z.number().nullable(), runner: z.string(),
   startedAt: z.string(), endedAt: z.string().nullable(), log: z.string(), lastTool: z.string().nullable(),
   run: z.string(), conversation: z.string(), handle: z.string(), reported: z.boolean(), error: z.string().nullable(),

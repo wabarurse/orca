@@ -12,7 +12,7 @@ What to keep in mind beyond that guide:
 - `--yes` only for an install or update the user requested; then verify with `orca2 plugin list --json`.
 - After changing an installed plugin run `orca2 plugin update <name> --yes` (not `enable`); a running chat keeps the
   old version until `/stop` and a reopen of orca2.
-- Never run `delete`, `stop`, `clean`, `pull` or `login` unless the user asked for exactly that.
+- Never run `delete`, `stop`, `kill`, `clean`, `pull` or `login` unless the user asked for exactly that.
 - The TUI's slash commands that change something (`/model`, `/effort`, `/fast`, `/mux`, `/compact`, ...) are orca2
   commands too, with the same code; run them only when the user asks for that change.
 - To write or change a plugin, load the `orca-plugin` skill.

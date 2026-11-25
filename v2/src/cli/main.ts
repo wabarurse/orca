@@ -80,7 +80,7 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === "bubbles") {
-    for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no folder: offered nowhere)"}\n`);
+    for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no home folder)"}\n`);
     return 0;
   }
   if (command === "bubble") {

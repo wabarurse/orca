@@ -11,8 +11,8 @@ export const USAGE = `orca2 [start] [folder]            open the TUI for a folde
   orca2 list                            conversations
   orca2 spans [conversation] [--json]   where the wall-clock time went
   orca2 delete --conversation id        stop its agents and remove it
-  orca2 bubbles                         bubbles and the folder each belongs to
-  orca2 bubble <name|id> --dir <folder>  point a bubble at a folder (chats there are offered it)
+  orca2 bubbles                         bubbles and each one's home folder
+  orca2 bubble <name|id> --dir <folder>  set a bubble's home folder (chats there see it first)
   ${CHAT_COMMANDS}
   orca2 mcp [test|login|logout] [name]
   ${PLUGIN_USAGE}
@@ -39,10 +39,10 @@ const GUIDANCE = `How to use it as an agent:
 - Read-only, safe any time: help, skill, version, list, bubbles, spans, plugin list/show/check/help, plugin config
   without --set/--unset, mcp, mcp test, clean --preview, and model, effort, fast, accounts or mux without an argument
   (they list the choices, the current one marked *).
-- Change state; only when the user asks: model/effort/fast/accounts/mux with an argument, compact, msg, rename, bubble,
+- Change state; only when the user asks: model/effort/fast/accounts/mux with an argument, compact, cancel, clear-chat, msg, rename, bubble,
   trust/untrust, plugin enable/disable/inherit/update/new, plugin config --set/--unset, mcp login/logout. A running TUI
   shows a changed model, effort or account within a few seconds.
-- Never without an explicit request, and never on your own conversation: delete, stop, clean (without --preview),
+- Never without an explicit request, and never on your own conversation: delete, stop, kill, clean (without --preview),
   pull, login. They end agents, remove data, replace the binary or open a browser sign-in.
 - Do not start the TUI (orca2 or orca2 start): it needs the user's terminal. orca2 -p runs a headless task and may
   spend model usage; use it only when asked.

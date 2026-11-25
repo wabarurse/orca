@@ -7,6 +7,7 @@ import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
 import type { GuardInput } from "../tools/bash/guard";
+import { RoleRecord } from "../roles";
 import { registerPluginModules } from "./modules";
 import type { AfterTool, BeforeRequest, BeforeTool, Listener, OnInput, Plugin, PluginBackground, PluginEvent, PluginUi, Retention, Service } from "./types";
 
@@ -53,7 +54,7 @@ export async function pluginHash(dir: string): Promise<string> {
 
 const isFn = (value: unknown): boolean => typeof value === "function";
 const fn = <T>() => z.custom<T>(isFn);
-const RoleName = z.enum(["orchestrator", "worker", "reviewer"]);
+const RoleName = RoleRecord;
 const ToolShape = z.object({ spec: z.looseObject({ name: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/) }), run: z.custom(isFn), parallel: z.custom(isFn) });
 const PluginRecord = z.object({
   name: z.string(), description: z.string(),
@@ -108,7 +109,7 @@ function pluginProblem(p: Record<string, unknown>, folder: string): string | nul
   }
   for (const bundle of listOf(p.bundles) ?? []) {
     const name = field(bundle, "name"), role = field(bundle, "role");
-    if (typeof name !== "string" || !NAME.test(name) || typeof role !== "string" || !["orchestrator", "worker", "reviewer"].includes(role)) return "each bundle needs a name and a role";
+    if (typeof name !== "string" || !NAME.test(name) || typeof role !== "string" || !RoleRecord.safeParse(role).success) return "each bundle needs a name and a role";
   }
   return null;
 }

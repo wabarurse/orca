@@ -2,6 +2,7 @@ import { fail, ok, type Result } from "../config";
 import type { CoreCommand, CommandContext } from "../core/commands";
 import { listConversations, readConversation, type Conversation } from "../core/conversations";
 import { ensureDaemon } from "../core/daemon/client";
+import { stopAgents } from "../core/runner/runtime";
 
 type Out = (text: string) => void;
 
@@ -20,6 +21,7 @@ export function cliContext(given: string | null, cwd: string, out: Out): Command
     conversation: () => cliConversation(given, cwd),
     directory: cwd,
     ensureDaemon: conversation => ensureDaemon(conversation, null),
+    stopAgents,
     write: text => { out(`${text}\n`); },
     openBrowser: async url => { Bun.spawn(process.platform === "darwin" ? ["open", url] : ["xdg-open", url], { stdout: "ignore", stderr: "ignore" }); },
     signal: null,

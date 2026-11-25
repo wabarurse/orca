@@ -4,7 +4,7 @@ import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolvie
 import { clock, phaseText } from "../core/spans";
 import type { AgentEvent, Entry, OpenSpan, ToolCall, ToolOutcome } from "../core/types";
 import { z } from "zod";
-import { dim, editor, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap } from "./components";
+import { dim, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, userFill, visibleLength, wordWrap, type TextInput } from "./components";
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
@@ -150,22 +150,27 @@ export function tail(events: AgentEvent[], lastDurableText: string, cols: number
   return [...shown, ...calls, ...activity];
 }
 
-export type Composer = { prompt: string; state: editor.EditState };
+export type Composer = { prompt: string; input: TextInput };
+export type ComposerBox = { rows: string[]; row: number; col: number; cursor: boolean; bodyTop: number; bodyLeft: number; bodyRows: number };
 
-export function composerRows(c: Composer, counts: string, right: string, cols: number, maxRows: number): { rows: string[]; row: number; col: number } {
+const composerPrompt = (prompt: string, cols: number): string => fit(sanitize(prompt), Math.max(0, Math.max(4, cols - 4) - 4));
+
+export function composerWidth(prompt: string, cols: number): number {
+  return Math.max(1, Math.max(4, cols - 4) - visibleLength(composerPrompt(prompt, cols)));
+}
+
+export function composerRows(c: Composer, counts: string, right: string, cols: number, maxRows: number): ComposerBox {
   const inner = Math.max(4, cols - 4);
-  const prompt = fit(sanitize(c.prompt), Math.max(0, inner - 4));
+  const prompt = composerPrompt(c.prompt, cols);
   const indent = visibleLength(prompt);
-  const lay = editor.layout(c.state, Math.max(1, inner - indent));
-  const shown = Math.max(1, Math.min(lay.rows.length, maxRows));
-  const top = editor.scrollWindow(lay.rows.length, lay.row, lay.rows.length, shown);
-  const body = lay.rows.slice(top, top + shown).map((r, i) => {
-    const text = fit((top + i === 0 ? prompt : " ".repeat(indent)) + sanitize(r.text), inner);
+  const lay = c.input.render(composerWidth(c.prompt, cols), maxRows);
+  const body = lay.rows.map((r, i) => {
+    const text = fit((i === 0 ? prompt : " ".repeat(indent)) + r, inner);
     return `${railMark("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${railMark("│")}`;
   });
   const tail = right.length > 0 && visibleLength(counts) + right.length + 3 <= inner ? right : "";
   const status = counts.length > 0 || tail.length > 0 ? fit(counts, inner - (tail.length > 0 ? tail.length + 3 : 0)) : "";
   const gap = " ".repeat(Math.max(0, inner - visibleLength(status) - tail.length));
   const bottom = status.length > 0 || tail.length > 0 ? `${railMark("│")} ${dim(`${status}${gap}${tail}`)} ${railMark("│")}` : railMark(`└${"─".repeat(cols - 2)}┘`);
-  return { rows: [railMark(`┌${"─".repeat(cols - 2)}┐`), ...body, bottom], row: 1 + lay.row - top, col: 2 + indent + lay.col };
+  return { rows: [railMark(`┌${"─".repeat(cols - 2)}┐`), ...body, bottom], row: 1 + lay.row, col: 2 + indent + lay.col, cursor: lay.cursor, bodyTop: 1, bodyLeft: 2 + indent, bodyRows: body.length };
 }

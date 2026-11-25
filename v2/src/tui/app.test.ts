@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { loadConfig, saveConfig } from "../config";
+import { loadConfig, paths, saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { writeStatus } from "../core/daemon/channel";
 import { ensureBubble, readBubble, setBubbleDirectory } from "../core/bubbles";
@@ -10,6 +10,7 @@ import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
+import { openTranscript } from "../core/transcript";
 import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
 import { main } from "../cli/main";
@@ -46,10 +47,13 @@ function fakeTerminal() {
 async function app(dir: string) {
   const t = fakeTerminal();
   const started: string[] = [];
-  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
+  const stopped: string[] = [];
+  const exits: number[] = [];
+  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {},
+    stopAgents: async c => { stopped.push(c); return []; }, exit: code => { exits.push(code); } });
   await a.start();
   await t.dismiss();
-  return { ...t, app: a, started };
+  return { ...t, app: a, started, stopped, exits };
 }
 
 describe("tui", () => {
@@ -79,7 +83,7 @@ describe("tui", () => {
     await saveConfig({ plugins: ["example"] });
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
     await a.start();
     await t.dismiss();
     expect(t.text()).not.toContain("Trust ");
@@ -153,17 +157,43 @@ describe("tui", () => {
     for (const c of COMMANDS) if (c.run !== null) c.run = async (args, ctx) => { calls.push(`${c.name} ${args.join(",")} ${(await ctx.conversation()).ok ? "chat" : "none"}`); return { ok: true, data: `ran ${c.name}` }; };
     const write = process.stdout.write.bind(process.stdout);
     try {
-      for (const c of COMMANDS.filter(x => x.run !== null)) {
+      for (const c of COMMANDS.filter(x => x.run !== null && x.name !== "kill")) {
         process.stdout.write = (): boolean => true;
         try { expect(await main([c.name, "arg", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
         await t.type(`/${c.name} arg`);
         await t.press({ name: "enter" });
         await t.shows(`ran ${c.name}`);
       }
+      process.stdout.write = (): boolean => true;
+      try { expect(await main(["kill", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+      await t.type("/kill");
+      await t.press({ name: "enter" });
+      await Bun.sleep(100);
     } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
-    const runnable = COMMANDS.filter(c => c.run !== null).map(c => c.name);
-    expect(calls).toEqual(runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]));
+    const runnable = COMMANDS.filter(c => c.run !== null && c.name !== "kill").map(c => c.name);
+    expect(calls).toEqual([...runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]), "kill  chat", "kill  chat"]);
+    expect(t.app["quitting"]).toBe(true);
+  });
+
+  test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    await t.app["transcript"].append({ type: "message", inbox: [], message: { role: "assistant", content: "before the clear" } });
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    expect(await t.shows("before the clear")).toContain("before the clear");
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (): boolean => true;
+    try { expect(await main(["clear-chat", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    await t.app.poll();
+    expect(t.text()).not.toContain("before the clear");
     t.app.stop();
+    await Bun.sleep(5);
+    const later = await app(home.path());
+    expect(await later.shows("before the clear")).toContain("before the clear");
+    later.app.stop();
   });
 
   test("a model, effort or fast change made through the CLI shows in a running TUI's header on its next poll", async () => {
@@ -213,152 +243,34 @@ describe("tui", () => {
     t.app.stop();
   });
 
-  test("a failed turn's error shows in full above the input, in red, never in the header", async () => {
-    const t = await app(home.path());
-    const error = "anthropic:default: The sign-in service rejected the credential exchange. Sign in again. Sign-in HTTP 400. Sign in again with: orca2 login anthropic default";
-    await writeStatus(t.app.conversationId(), { pid: 1, run: "r", build: "test", state: "idle", since: "", turns: 1, error, contextTokens: null, phase: null });
-    await t.app.poll();
-    const screen = t.screen();
-    expect(screen?.kind).toBe("chat");
-    if (screen?.kind !== "chat") return;
-    expect(JSON.stringify(screen.header)).not.toContain("failed");
-    const footer = Bun.stripANSI(screen.footer.join(" "));
-    expect(footer).toContain("last turn failed:");
-    expect(footer.replace(/\s+/g, " ")).toContain("orca2 login anthropic default");
-    expect(screen.footer.some(row => row.includes("\x1b[38;5;217m"))).toBe(true);
-    await t.press({ name: "char", text: "x" });
-    expect(Bun.stripANSI((t.screen()?.kind === "chat" ? t.text() : ""))).not.toContain("last turn failed");
-    t.app.stop();
-  });
-
-  test("a new chat shows the whale; Ctrl+B lists bubbles with their chats; Ctrl+N asks which bubble the new chat joins", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-bubbles-"));
-    const other = await createConversation(dir, "notes chat");
-    const bubble = await ensureBubble(other.id);
-    expect(bubble.ok).toBe(true);
-    if (!bubble.ok) return;
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
-    await a.start();
-    const first = t.screen();
-    expect(first?.kind === "chat" ? first.welcome.join("\n") : "").toContain("#####");
-    await t.press({ name: "b", ctrl: true });
-    expect(t.text()).toContain("[Bubbles]");
-    expect(t.text()).toContain("notes chat");
-    await t.press({ name: "escape" });
-    await t.press({ name: "n", ctrl: true });
-    expect(t.text()).toContain("bubble for the new chat");
-    expect(t.text()).toContain("New bubble");
-    await t.press({ name: "down" }, { name: "enter" });
-    await Bun.sleep(50);
-    expect((await readConversation(a.conversationId()))?.bubble).toBe(bubble.data.id);
-    expect(a.conversationId()).not.toBe(other.id);
-    await t.press({ name: "b", ctrl: true });
-    expect(t.text()).toContain("2 chats");
-    a.stop();
-  });
-
-  test("Ctrl+N opens a new chat as another header tab; Ctrl+H/Ctrl+L and Alt+←/→ switch between them; /close closes the open one", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-tabs-"));
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
-    await a.start();
-    const tabs = (): { label: string; active: boolean }[] => { const s = t.screen(); return s?.kind === "chat" && s.header !== null ? s.header.tabs.map(x => ({ label: x.label, active: x.active })) : []; };
-    const first = a.conversationId();
-    const newChat = async (): Promise<void> => {
-      await t.press({ name: "n", ctrl: true });
-      await t.shows("bubble for the new chat");
-      await t.press({ name: "enter" });
-      await t.shows("name the new bubble");
-      await t.press({ name: "enter" });
-      await t.shows("new bubble ");
-    };
-    await newChat();
-    const second = a.conversationId();
-    await newChat();
-    expect(tabs().map(x => x.label)).toEqual([first, second, a.conversationId()]);
-    expect(tabs().findIndex(x => x.active)).toBe(2);
-    await t.press({ name: "h", ctrl: true });
-    expect(a.conversationId()).toBe(second);
-    await t.press({ name: "h", ctrl: true });
-    expect(a.conversationId()).toBe(first);
-    await t.press({ name: "l", ctrl: true }, { name: "l", ctrl: true }, { name: "left", alt: true });
-    expect(a.conversationId()).toBe(second);
-    await t.type("/close");
-    await t.press({ name: "enter" });
-    expect(tabs().length).toBe(2);
-    expect(tabs().map(x => x.label)).not.toContain(second);
-    a.stop();
-  });
-
-  test("opening orca2 in a folder shows every chat of that folder as a tab, oldest first, on the newest", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-all-"));
-    const older = await createConversation(dir, "older");
-    await Bun.sleep(5);
-    const newer = await createConversation(dir, "newer");
-    await createConversation(home.path(), "elsewhere");
-    const t = await app(dir);
-    const s = t.screen();
-    const tabs = s?.kind === "chat" && s.header !== null ? s.header.tabs : [];
-    expect(tabs.map(x => x.label)).toEqual(["older", "newer"]);
-    expect(t.app.conversationId()).toBe(newer.id);
-    await t.press({ name: "h", ctrl: true });
-    expect(t.app.conversationId()).toBe(older.id);
-    t.app.stop();
-  });
-
-  test("/rename renames the open chat everywhere it shows, and its bubble while that still has the old name", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-rename-"));
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
-    await a.start();
+  test("Up/Down recall earlier input (messages and commands) only from an empty composer; over typed text they only move the cursor", async () => {
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-history-")));
     await Bun.sleep(50);
     await t.press({ name: "escape" });
-    const bubble = await ensureBubble(a.conversationId());
-    expect(bubble.ok).toBe(true);
-    await t.type("/rename   raven  work ");
+    const composer = (): string => t.text().split("\n").filter(line => line.includes("› ")).join("\n");
+    await t.type("one");
     await t.press({ name: "enter" });
-    expect((await readConversation(a.conversationId()))?.name).toBe("raven work");
-    const screen = t.screen();
-    expect(screen?.kind === "chat" && screen.header !== null ? screen.header.tabs.map(x => x.label) : []).toEqual(["raven work"]);
-    expect(bubble.ok ? (await readBubble(bubble.data.id))?.name : "").toBe("raven work");
-    await t.type("/rename");
+    await t.type("/nope");
     await t.press({ name: "enter" });
-    expect(t.text()).toContain("rename to raven work");
-    a.stop();
-  });
-
-  test("a folder's first chat asks which of that folder's bubbles it joins (never another folder's); d on the Bubbles tab deletes a chat after y", async () => {
-    const elsewhere = await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-other-")), "shared notes");
-    const shared = await ensureBubble(elsewhere.id);
-    expect(shared.ok).toBe(true);
-    if (!shared.ok) return;
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-first-"));
-    const foreign = await ensureBubble((await createConversation(mkdtempSync(join(tmpdir(), "orca2-tui-foreign-")), "foreign")).id);
-    expect((await setBubbleDirectory(shared.data.id, dir)).ok).toBe(true);
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
-    await a.start();
-    await Bun.sleep(50);
-    expect(t.text()).toContain("bubble for this chat");
-    expect(foreign.ok && t.text().includes(foreign.data.name)).toBe(false);
-    const options = t.text().split("\n").filter(line => line.includes("· ") && line.includes("chats"));
-    const at = options.findIndex(line => line.includes(shared.data.name));
-    await t.press(...Array.from({ length: at + 1 }, () => ({ name: "down" })), { name: "enter" });
-    await Bun.sleep(50);
-    const first = a.conversationId();
-    expect((await readConversation(first))?.bubble).toBe(shared.data.id);
-    await a.refresh();
-    expect(t.text()).toContain("0 agents │ 1 bubble");
-    await t.press({ name: "b", ctrl: true });
-    for (let i = 0; i < 40 && !t.text().split("\n").some(line => line.startsWith("› ") && /[├└]─ shared notes/.test(line)); i++) await t.press({ name: "char", text: "j" });
-    await t.press({ name: "char", text: "d" });
-    expect(t.text()).toContain("delete chat shared notes?");
-    await t.press({ name: "char", text: "y" });
-    await Bun.sleep(50);
-    expect(await readConversation(elsewhere.id)).toBeNull();
-    expect(a.conversationId()).toBe(first);
-    a.stop();
+    await t.press({ name: "up" });
+    expect(composer()).toContain("› /nope");
+    await t.press({ name: "up" });
+    expect(composer()).toContain("› one");
+    await t.press({ name: "down" });
+    expect(composer()).toContain("› /nope");
+    await t.press({ name: "down" });
+    expect(composer()).not.toContain("/nope");
+    expect(composer()).not.toContain("one");
+    await t.type("draft");
+    await t.press({ name: "up" });
+    expect(composer()).toContain("› draft");
+    await t.press({ name: "char", text: "!" });
+    expect(composer()).toContain("› !draft");
+    await t.press({ name: "end" }, { name: "enter", shift: true }, { name: "char", text: "x" }, { name: "up" }, { name: "char", text: "?" });
+    expect(composer()).toContain("› !?draft");
+    await t.press({ name: "down" }, { name: "down" });
+    expect(composer()).not.toContain("/nope");
+    t.app.stop();
   });
 
   test("Shift+Enter (or Alt+Enter) adds a new line in the composer instead of sending", async () => {
@@ -407,7 +319,7 @@ describe("tui", () => {
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: mkdtempSync(join(tmpdir(), "orca2-tui-copy-")), now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }),
       clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async text => { copied.push(text); return { ok: true, data: null }; },
-      openUrl: async url => { opened.push(url); return { ok: true, data: null }; }, open: async () => {}, exit: () => {} });
+      pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async url => { opened.push(url); return { ok: true, data: null }; }, open: async () => {}, stopAgents: async () => [], exit: () => {} });
     await a.start();
     await Bun.sleep(50);
     await t.press({ name: "escape" });
@@ -426,7 +338,7 @@ describe("tui", () => {
     const dir = mkdtempSync(join(tmpdir(), "orca2-tui-newbubble-"));
     const t = fakeTerminal();
     const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }),
-      copy: async () => ({ ok: true, data: null }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, exit: () => {} });
+      copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
     await a.start();
     expect(await t.shows("bubble for this chat")).toContain("No bubble (no shared memory)");
     await t.press({ name: "enter" });

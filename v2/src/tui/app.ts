@@ -10,30 +10,32 @@ import { removeConversation } from "../core/lifecycle";
 import { cancel, ensureDaemon, say, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
-import { COMMANDS, command as coreCommand, type CommandContext, type CoreCommand, type Run } from "../core/commands";
+import { COMMANDS, command as coreCommand, readViewClear, type CommandContext, type CoreCommand, type Run } from "../core/commands";
+import { readInputHistory, recordInput, remember } from "../core/input-history";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
-import { runners, stopAgent } from "../core/runner/runtime";
+import { runners, stopAgent, stopAgents } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { bold, dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
+import { bold, dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
 import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf";
 import { loadUis, type BoundUi } from "./plugins";
-import { composerRows, items, pieces, tail, userItem } from "./view";
+import { composerRows, items, pieces, tail, userItem, type ComposerBox } from "./view";
+import { browsing, newer, older, onRecalled, sinceClear, type Browse, type Step } from "./history";
 import { renderWork, type WorkTab } from "./work";
 import { learnModel, type Choice } from "../core/settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
-  | { kind: "input"; prompt: string; state: editor.EditState; resolve: (text: string | null) => void }
+  | { kind: "input"; prompt: string; input: TextInput; resolve: (text: string | null) => void }
   | { kind: "pick"; title: string; options: string[]; current: number | null; index: number; resolve: (index: number | null) => void };
 
 type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string; archiveOpen: boolean };
@@ -45,8 +47,10 @@ export type AppDeps = {
   ensureDaemon: (conversation: string) => Promise<Result<number>>;
   clipboard: () => Promise<Result<Uint8Array>>;
   copy: (text: string) => Promise<Result<null>>;
+  pasteText: () => Promise<Result<string>>;
   openUrl: (url: string) => Promise<Result<null>>;
   open: (path: string) => Promise<void>;
+  stopAgents: (conversation: string) => Promise<string[]>;
   exit: (code: number) => void;
 };
 
@@ -58,6 +62,7 @@ const errorText = (line: string): string => noColour() ? line : `\x1b[${pastel.r
 const SLOW_MS = 2000;
 const PICK_ROWS = 8;
 const HEADER_ROWS = 7;
+const EDITING_CHORDS = new Set(["d", "e", "j", "k", "u", "w", "y", "z"]);
 
 export class App {
   private current: { conversation: Conversation; transcript: Transcript } | null = null;
@@ -70,7 +75,12 @@ export class App {
   private status: DaemonStatus | null = null;
   private busy = false;
   private waiting: OpenSpan | null = null;
-  private composer: editor.EditState = { text: "", cursor: 0 };
+  private readonly input: TextInput;
+  private box: { top: number; box: ComposerBox } | null = null;
+  private history: Browse = browsing([]);
+  private cleared = new Map<string, string | null>();
+  private viewClears = new Map<string, number>();
+  private readonly openedAt = Date.now();
   private images: string[] = [];
   private queued: Message[] = [];
   private confirms: Confirm[] = [];
@@ -99,7 +109,24 @@ export class App {
   private openTabs: { id: string; name: string; busy: boolean }[] = [];
   private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
 
-  constructor(private readonly deps: AppDeps) {}
+  constructor(private readonly deps: AppDeps) {
+    this.input = new TextInput({ multiline: true, clipboard: this.clipboard(),
+      onSubmit: () => this.submit("steer"),
+      onVertical: (dir, atEdge) => this.recall(dir, atEdge),
+      onNote: (text, error) => { this.flash(text, error); } });
+  }
+
+  private get composer(): editor.EditState { return this.input.state; }
+
+  private clipboard(): InputClipboard {
+    return { copy: text => this.copyText(text), paste: () => this.deps.pasteText() };
+  }
+
+  private async copyText(text: string): Promise<Result<null>> {
+    const done = await this.deps.copy(text);
+    if (done.ok) return done;
+    return this.deps.terminal.copyOsc52?.(text) === true ? ok(null) : done;
+  }
 
   private get conversation(): Conversation {
     if (this.current === null) throw new Error("the TUI used its conversation before start()");
@@ -155,6 +182,7 @@ export class App {
     this.events = [];
     this.liveTurn = -1;
     this.page = null;
+    this.history = browsing(await readInputHistory(conversation.id).catch((): string[] => []));
     const loaded = await loadUis(conversation.id);
     this.uis = loaded.uis;
     this.folds = loaded.folds;
@@ -170,7 +198,7 @@ export class App {
     this.transcript.refresh();
     if (this.transcript.head() !== this.head) {
       this.head = this.transcript.head();
-      const all = this.transcript.all();
+      const all = sinceClear(this.transcript.all(), this.cleared.get(id) ?? null);
       const list = pieces(all);
       this.cached = items(list, { cols: this.deps.terminal.cols, open: this.open, folds: this.folds });
       const last = [...list].reverse().find(p => p.kind === "text");
@@ -226,7 +254,13 @@ export class App {
     const config = await loadConfig();
     const meta = await readConversation(id);
     const bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    const viewClear = await readViewClear(id);
     if (this.conversation.id !== id) return;
+    if (viewClear !== null && viewClear.at > (this.viewClears.get(id) ?? this.openedAt)) {
+      this.viewClears.set(id, viewClear.at);
+      this.cleared.set(id, viewClear.head);
+      this.head = "unset";
+    }
     if (meta !== null) {
       this.current = { conversation: meta, transcript: this.transcript };
       const tab = this.openTabs.find(t => t.id === id);
@@ -253,7 +287,11 @@ export class App {
   private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<boolean | string | number | null> {
     return new Promise(resolve => {
       if (modal.kind === "confirm") this.modal = { kind: "confirm", question: modal.question, resolve: yes => { this.modal = null; resolve(yes); this.draw(); } };
-      else if (modal.kind === "input") this.modal = { kind: "input", prompt: modal.prompt, state: { text: modal.initial, cursor: modal.initial.length }, resolve: text => { this.modal = null; resolve(text); this.draw(); } };
+      else if (modal.kind === "input") {
+        const done = (text: string | null): void => { this.modal = null; resolve(text); this.draw(); };
+        const input = new TextInput({ multiline: false, clipboard: this.clipboard(), onSubmit: text => { done(text); }, onNote: (text, error) => { this.flash(text, error); } }, modal.initial);
+        this.modal = { kind: "input", prompt: modal.prompt, input, resolve: done };
+      }
       else this.modal = { kind: "pick", title: modal.title, options: modal.options, current: modal.current, index: Math.max(0, modal.current ?? 0), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
       this.draw();
     });
@@ -288,41 +326,76 @@ export class App {
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
 
   private async key(key: Key): Promise<void> {
-    if (this.modal !== null) { this.modalKey(this.modal, key); return; }
+    keyLog(`app ${JSON.stringify(key)} modal=${this.modal?.kind ?? "none"} page=${String(this.page !== null)}`);
+    if (key.ctrl === true && key.name === "c") { await this.kill(); return; }
+    if (this.modal !== null) { await this.modalKey(this.modal, key); return; }
     if (this.page !== null) { await this.pageKey(key); return; }
     this.note = "";
-    const id = this.conversation.id;
-    if (key.ctrl === true) {
-      if (key.name === "c") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else if (this.composer.text.length > 0) this.composer = { text: "", cursor: 0 }; else this.flash("Ctrl+D quits"); }
-      else if (key.name === "d" && this.composer.text.length === 0) { await this.quit(); return; }
-      else if (key.name === "a") await this.openPage(0);
-      else if (key.name === "n") await this.newConversation();
-      else if (key.name === "h" || key.name === "l") { await this.cycle(key.name === "h" ? -1 : 1); return; }
-      else if (key.name === "v") await this.pasteImage();
-      else if (key.name === "j") this.composer = editor.newline(this.composer);
-      else if (key.name === "u") this.composer = editor.killToStart(this.composer);
-      else if (key.name === "k") this.composer = editor.killToEnd(this.composer);
-      else if (key.name === "w") this.composer = editor.deleteWordBack(this.composer);
-      else {
-        const tab = this.tabs().findIndex(t => t.chord === key.name);
-        if (tab !== -1) await this.openPage(tab);
-      }
-      this.draw();
-      return;
-    }
-    if (key.alt === true && (key.name === "left" || key.name === "right")) { await this.cycle(key.name === "left" ? -1 : 1); return; }
+    this.focusComposer();
+    if (key.ctrl === true && await this.chord(key)) { this.draw(); return; }
+    const handled = await this.input.key(key);
+    keyLog(`composer ${handled ? "took" : "left"} ${JSON.stringify(key)} focused=${String(this.input.isFocused)} selection=${JSON.stringify(editor.selection(this.composer))}`);
+    if (handled) { this.draw(); return; }
     switch (key.name) {
-      case "enter": if (key.shift === true || key.alt === true) this.composer = editor.newline(this.composer); else await this.submit("steer"); break;
       case "tab": await this.submit(this.busy ? "follow" : "steer"); break;
       case "escape": if (this.signing !== null) this.signing.controller.abort(); else await this.takeBack(); break;
       case "pageup": case "wheelup": this.deps.terminal.scroll(key.name === "pageup" ? "page-up" : "up"); break;
       case "pagedown": case "wheeldown": this.deps.terminal.scroll(key.name === "pagedown" ? "page-down" : "down"); break;
-      default: this.composer = edit(this.composer, key);
+      default: break;
     }
     this.draw();
   }
 
-  private modalKey(modal: Modal, key: Key): void {
+  private async chord(key: Key): Promise<boolean> {
+    if (key.shift === true || key.alt === true || key.cmd === true) return false;
+    if ((key.name === "a" && this.composer.text.length > 0) || EDITING_CHORDS.has(key.name)) return false;
+    if (key.name === "n") { await this.newConversation(); return true; }
+    if (key.name === "h" || key.name === "l") { await this.cycle(key.name === "h" ? -1 : 1); return true; }
+    if (key.name === "v") { await this.pasteImage(); return true; }
+    const tab = this.tabs().findIndex(t => t.chord === key.name);
+    if (tab === -1) return false;
+    await this.openPage(tab);
+    return true;
+  }
+
+  private focusComposer(): void {
+    if (this.modal?.kind === "input") { this.input.blur(); this.modal.input.focus(); return; }
+    if (this.modal !== null || this.page !== null) this.input.blur(); else this.input.focus();
+  }
+
+  private recall(dir: -1 | 1, atEdge: boolean): boolean {
+    const recalled = onRecalled(this.history, this.composer);
+    if (!recalled && this.composer.text.length > 0) return false;
+    if (!recalled && this.history.at !== null) this.history = browsing(this.history.entries);
+    const step: Step | null = dir === -1 ? older(this.history, this.composer) : newer(this.history);
+    if (step === null) return atEdge || recalled;
+    this.history = step.browse;
+    this.input.restore(step.state);
+    return true;
+  }
+
+  private inputMouse(phase: "down" | "drag" | "up", row: number, col: number): void {
+    const at = this.box;
+    if (at === null || this.page !== null) return;
+    const bodyRow = row - at.top - at.box.bodyTop;
+    const inside = bodyRow >= 0 && bodyRow < at.box.bodyRows && col >= at.box.bodyLeft - 2;
+    if (phase === "down" && !inside) return;
+    const target = this.modal?.kind === "input" ? this.modal.input : this.input;
+    if (phase === "down" && this.modal !== null && this.modal.kind !== "input") {
+      if (this.modal.kind === "confirm") this.modal.resolve(false); else this.modal.resolve(null);
+    }
+    target.mouse(phase, bodyRow, col - at.box.bodyLeft, this.deps.now());
+    this.draw();
+  }
+
+  private async remember(text: string): Promise<void> {
+    const id = this.conversation.id;
+    this.history = browsing(remember(this.history.entries, text));
+    const saved = await recordInput(id, text).catch(() => null);
+    if (saved !== null && this.conversation.id === id && this.history.at === null) this.history = browsing(saved);
+  }
+
+  private async modalKey(modal: Modal, key: Key): Promise<void> {
     if (modal.kind === "confirm") {
       if (key.name === "char" && (key.text === "y" || key.text === "Y")) modal.resolve(true);
       else if ((key.name === "char" && (key.text === "n" || key.text === "N")) || key.name === "escape") modal.resolve(false);
@@ -336,16 +409,18 @@ export class App {
       this.draw();
       return;
     }
-    if (key.name === "escape") modal.resolve(null);
-    else if (key.name === "enter") modal.resolve(modal.state.text);
-    else modal.state = edit(modal.state, key);
-    this.draw();
+    if (key.name === "escape") { modal.resolve(null); return; }
+    modal.input.focus();
+    await modal.input.key(key);
+    if (this.modal === modal) this.draw();
   }
 
   private async submit(delivery: "steer" | "follow"): Promise<void> {
     const text = this.composer.text.trim();
     if (text.length === 0 && this.images.length === 0) return;
-    this.composer = { text: "", cursor: 0 };
+    this.input.setValue("");
+    if (text.length > 0) await this.remember(text);
+    else this.history = browsing(this.history.entries);
     if (text.startsWith("/")) { await this.command(text); return; }
     await say(this.conversation.id, text, this.images, delivery);
     this.images = [];
@@ -358,7 +433,8 @@ export class App {
     if (last === undefined) return;
     const message = await unsay(this.conversation.id, last.id);
     if (message === null) return;
-    this.composer = { text: message.text, cursor: message.text.length };
+    this.input.setValue(message.text);
+    this.history = browsing(this.history.entries);
     this.images = message.images;
     await this.poll();
   }
@@ -452,7 +528,8 @@ export class App {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "kill") { await this.kill(); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /kill stop every agent and quit · /exit quit, agents keep running · /cancel stop the turn · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L switch chats · ↑/↓ earlier input · ⌥←/→ words · ⌘←/→ line · ⌘A select all · ⌘Z/⌘⇧Z undo/redo (Ctrl+Z/Ctrl+Y) · ⌘C/⌘X/⌘V copy/cut/paste · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "close") { await this.closeTab(); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
     const core = coreCommand(name);
@@ -469,6 +546,7 @@ export class App {
       conversation: async () => ok((await readConversation(id)) ?? fallback),
       directory: this.deps.directory,
       ensureDaemon: conversation => this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error))),
+      stopAgents: conversation => this.deps.stopAgents(conversation),
       write,
       openBrowser: async url => { await this.deps.openUrl(url); },
       signal,
@@ -544,6 +622,18 @@ export class App {
   }
 
 
+  private async kill(): Promise<void> {
+    if (this.quitting) return;
+    this.flash("stopping every agent, then quitting…");
+    const kill = coreCommand("kill")?.run ?? null;
+    for (const tab of this.openTabs) {
+      const meta = await readConversation(tab.id);
+      if (kill === null || meta === null) continue;
+      await kill([], { ...this.commandContext(null, () => undefined), conversation: async () => ok(meta) }).catch(() => undefined);
+    }
+    await this.quit();
+  }
+
   private async quit(): Promise<void> {
     this.quitting = true;
     this.stop();
@@ -558,9 +648,11 @@ export class App {
     } else if (action.kind === "open") {
       const tab = this.tabs().findIndex(t => t.id === action.tab);
       if (tab !== -1) this.openPage(tab).catch((error: unknown) => { this.failed(error); });
+    } else if (action.kind === "input") {
+      this.inputMouse(action.phase, action.row, action.col);
     } else if (action.kind === "copy") {
       const text = action.text;
-      this.deps.copy(text).then(done => { this.flash(done.ok ? `copied ${text.length} character${text.length === 1 ? "" : "s"}` : `copy failed: ${done.error}`, !done.ok); },
+      this.copyText(text).then(done => { this.flash(done.ok ? `copied ${text.length} character${text.length === 1 ? "" : "s"}` : `copy failed: ${done.error}`, !done.ok); },
         (error: unknown) => { this.failed(error); });
     } else {
       const url = action.url;
@@ -716,6 +808,7 @@ export class App {
 
   private draw(): void {
     const t = this.deps.terminal;
+    this.focusComposer();
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
@@ -744,10 +837,11 @@ export class App {
         if (pick.options.length > PICK_ROWS) footer.push(dim(`${pick.index + 1} of ${pick.options.length}`));
       }
     }
-    const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, state: this.modal.state } : { prompt: "› ", state: this.composer };
+    const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, input: this.modal.input } : { prompt: "› ", input: this.input };
     const plugins = `${this.activePlugins.length} plugin${this.activePlugins.length === 1 ? "" : "s"} · Ctrl+P`;
     const box = composerRows(composing, this.counts, plugins, cols, Math.max(1, Math.floor(t.rows / 3)));
-    cursor = { row: footer.length + box.row, col: box.col };
+    this.box = { top: footer.length, box };
+    cursor = box.cursor ? { row: footer.length + box.row, col: box.col } : null;
     footer.push(...box.rows);
     const fin = this.cached.length === 0 && this.queued.length === 0 && !this.busy ? null : { time: this.deps.now(), active: this.busy };
     const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
@@ -760,7 +854,7 @@ export class App {
   private modalLine(modal: Modal): string {
     if (modal.kind === "confirm") return `${modal.question}  y yes · n/esc no`;
     if (modal.kind === "pick") return dim(`${modal.title}   ↑↓ enter   esc cancels`);
-    return `${modal.prompt}${modal.state.text}`;
+    return `${modal.prompt}${modal.input.value}`;
   }
 }
 
@@ -774,19 +868,6 @@ export function settingsLabel(conversation: Conversation | null): string {
 export function contextLine(used: number | null, model: string): string {
   const window = contextWindow({}, model);
   return ` · ctx ${used === null ? "-" : tokens(used)}/${window.estimated ? "~" : ""}${tokens(window.limit)}`;
-}
-
-function edit(state: editor.EditState, key: Key): editor.EditState {
-  switch (key.name) {
-    case "char": case "paste": return editor.insert(state, key.text ?? "");
-    case "backspace": return key.alt === true ? editor.deleteWordBack(state) : editor.backspace(state);
-    case "delete": return editor.deleteForward(state);
-    case "left": return key.alt === true ? editor.wordLeft(state) : editor.left(state);
-    case "right": return key.alt === true ? editor.wordRight(state) : editor.right(state);
-    case "home": return editor.home(state);
-    case "end": return editor.end(state);
-    default: return state;
-  }
 }
 
 async function openUrl(url: string): Promise<Result<null>> {
@@ -809,7 +890,9 @@ export async function startTui(directory: string): Promise<number> {
       ensureDaemon: conversation => ensureDaemon(conversation, null),
       clipboard: async () => { const image = await readClipboardImage(); return image.ok ? ok(image.data.bytes) : image; },
       copy: text => writeClipboardText(text),
+      pasteText: () => readClipboardText(),
       openUrl,
+      stopAgents,
       open: async path => { await Bun.spawn(process.platform === "darwin" ? ["open", path] : ["xdg-open", path], { stdout: "ignore", stderr: "ignore" }).exited; },
       exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
     const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };

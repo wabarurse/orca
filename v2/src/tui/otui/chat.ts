@@ -116,7 +116,11 @@ export class ChatView {
     this.welcome = new BoxRenderable(ctx, { flexGrow: 1, justifyContent: "center", alignItems: "center", visible: false });
     this.welcomeArt = new TextRenderable(ctx, { content: "", wrapMode: "none", fg: COLOURS.muted });
     this.welcome.add(this.welcomeArt);
-    this.footer = new TextRenderable(ctx, { content: "", wrapMode: "none", flexShrink: 0, selectable: true });
+    this.footer = new TextRenderable(ctx, { content: "", wrapMode: "none", flexShrink: 0, selectable: false });
+    this.footer.onMouseDown = (event: MouseEvent) => { this.footerMouse("down", event); };
+    this.footer.onMouseDrag = (event: MouseEvent) => { this.footerMouse("drag", event); };
+    this.footer.onMouseUp = (event: MouseEvent) => { this.footerMouse("up", event); };
+    this.footer.onMouseDragEnd = (event: MouseEvent) => { this.footerMouse("up", event); };
     this.body.add(this.tail);
     this.root.add(this.header);
     this.root.add(this.body);
@@ -135,6 +139,11 @@ export class ChatView {
     this.footerHeight = Math.max(1, screen.footer.length);
     this.footer.height = this.footerHeight;
     this.body.marginBottom = this.ctx.height >= 8 ? 1 : 0;
+  }
+
+  private footerMouse(phase: "down" | "drag" | "up", event: MouseEvent): void {
+    if (event.button !== 0) return;
+    this.events.action({ kind: "input", phase, row: event.y - this.footer.y, col: event.x - this.footer.x });
   }
 
   footerRows(): number {

@@ -1,17 +1,22 @@
 import { accounts, parseLogin, signIn, type Account } from "../api/auth";
-import { fail, loadConfig, ok, saveConfig, type Result } from "../config";
-import type { Conversation } from "./conversations";
-import { compactNow, stopDaemon } from "./daemon/client";
+import { join } from "node:path";
+import { z } from "zod";
+import { fail, loadConfig, ok, paths, saveConfig, type Result } from "../config";
+import { writeAtomic, type Conversation } from "./conversations";
+import { readStatus } from "./daemon/channel";
+import { cancel, compactNow, stopDaemon } from "./daemon/client";
 import { renameConversation } from "./lifecycle";
 import { enabledUis } from "./plugins/uis";
 import { chooseRunner, runnerNames } from "./runner/runtime";
 import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
+import { openTranscript } from "./transcript";
 import { setTrust } from "./trust";
 
 export type CommandContext = {
   conversation: () => Promise<Result<Conversation>>;
   directory: string;
   ensureDaemon: (conversation: string) => Promise<Result<number>>;
+  stopAgents: (conversation: string) => Promise<string[]>;
   write: (text: string) => void;
   openBrowser: (url: string) => Promise<void>;
   signal: AbortSignal | null;
@@ -95,6 +100,24 @@ async function loginCommand(args: string[], ctx: CommandContext): Promise<Result
   return used.ok ? ok(`signed in to ${id}; ${used.data.note}`) : used;
 }
 
+const VIEW_CLEAR = z.object({ head: z.string().nullable(), at: z.number() });
+export type ViewClear = z.infer<typeof VIEW_CLEAR>;
+const viewClearFile = (conversation: string): string => join(paths.conversation(conversation), "view-clear.json");
+
+export async function readViewClear(conversation: string): Promise<ViewClear | null> {
+  const file = Bun.file(viewClearFile(conversation));
+  if (!(await file.exists())) return null;
+  const parsed = VIEW_CLEAR.safeParse(await file.json().catch((): unknown => null));
+  return parsed.success ? parsed.data : null;
+}
+
+async function clearView(conversation: string): Promise<void> {
+  const head = openTranscript(paths.transcript(conversation, "orchestrator")).head();
+  await writeAtomic(viewClearFile(conversation), JSON.stringify({ head, at: Date.now() }));
+}
+
+const turning = async (conversation: string): Promise<boolean> => (await readStatus(conversation).catch(() => null))?.state === "turn";
+
 const pick = (choices: (ctx: CommandContext) => Promise<Result<Choices>>): Ask => ({ kind: "pick", choices });
 
 export const COMMANDS: CoreCommand[] = [
@@ -154,6 +177,23 @@ export const COMMANDS: CoreCommand[] = [
     })(ctx) },
   { name: "stop", args: "", description: "stop the chat's daemon", scoped: true, ask: null,
     run: async (_args, ctx) => withConversation(async conversation => { await stopDaemon(conversation.id); return ok("daemon stopped"); })(ctx) },
+  { name: "cancel", args: "", description: "stop the chat's current turn; agents keep running", scoped: true, ask: null,
+    run: async (_args, ctx) => withConversation(async conversation => {
+      if (!(await turning(conversation.id))) return ok("nothing is running");
+      await cancel(conversation.id);
+      return ok("cancelling…");
+    })(ctx) },
+  { name: "kill", args: "", description: "stop the chat's turn and every agent it runs (the TUI does it for every open chat, then quits)", scoped: true, ask: null,
+    run: async (_args, ctx) => withConversation(async (conversation, c) => {
+      if (await turning(conversation.id)) await cancel(conversation.id).catch(() => undefined);
+      const stopped = await c.stopAgents(conversation.id).catch((): string[] => []);
+      return ok(stopped.length === 0 ? "turn stopped; no agents were running" : `stopped ${stopped.join(", ")}`);
+    })(ctx) },
+  { name: "clear-chat", args: "", description: "clear the chat's view in a running TUI; the transcript, memory and agent context are unchanged, and a restart shows it again", scoped: true, ask: null,
+    run: async (_args, ctx) => withConversation(async conversation => {
+      await clearView(conversation.id);
+      return ok("chat view cleared; the transcript, memory and agent context are unchanged, and a restart shows it again");
+    })(ctx) },
   { name: "trust", args: "[folder]", description: "trust a folder again: its instructions, skills and plugins load (restart agents to pick them up)", scoped: false, ask: null,
     run: async (args, ctx) => { const folder = args[0] ?? ctx.directory; await setTrust(folder, true); return ok(`trusted ${folder}`); } },
   { name: "untrust", args: "[folder]", description: "keep a folder's instructions, skills and plugins off", scoped: false, ask: null,
@@ -161,7 +201,7 @@ export const COMMANDS: CoreCommand[] = [
   { name: "plugins", args: "", description: "open the Plugins page (CLI: orca2 plugin list)", scoped: false, ask: null, run: null },
   { name: "close", args: "", description: "close the chat's tab; the chat stays", scoped: false, ask: null, run: null },
   { name: "help", args: "", description: "show the keys and commands (CLI: orca2 help)", scoped: false, ask: null, run: null },
-  { name: "quit", args: "", description: "quit the TUI (also /exit)", scoped: false, ask: null, run: null },
+  { name: "quit", args: "", description: "quit the TUI; agents keep running (also /exit)", scoped: false, ask: null, run: null },
 ];
 
 export const command = (name: string): CoreCommand | null => COMMANDS.find(c => c.name === name) ?? null;

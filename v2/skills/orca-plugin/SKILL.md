@@ -218,7 +218,7 @@ export default ui;
 ```
 
 Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q. The core
-uses Ctrl+ a, c, d, j, k, n, u, v, w; the questions and tasks plugins take q and t. On the page the core uses j, k, h,
+uses Ctrl+ a, b, c, d, e, h, j, k, l, n, p, u, v, w, y, z; the questions and tasks plugins take q and t. On the page the core uses j, k, h,
 l, q, r, a, A, u (archive and restore), the digits, Tab, Esc, PgUp/PgDn, and s on the Agents tab; any other single
 character is yours for actions, and `key: "enter"` runs on Enter.
 `tone` is normal, good, warn, bad or dim. A tab belongs to one plugin: rows cannot be added to another plugin's tab.
