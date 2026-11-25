@@ -33,11 +33,14 @@ const GUIDANCE = `How to use it as an agent:
   --global only when the user asks for a global change.
 - --yes approves a plugin's exact content without asking. Use it only for an install or update the user requested;
   group the plugins of one request in one enable. Verify every change with orca2 plugin list --json (or show --json).
+- After changing an installed plugin, run orca2 plugin update <name> [--from <folder>] --yes, never enable (enable also
+  turns it on). New agents load the new version at once; a running chat keeps what it loaded until it is restarted:
+  orca2 stop --conversation id (or /stop), then the user reopens orca2.
 - Read-only, safe any time: help, skill, version, list, bubbles, spans, plugin list/show/check/help, plugin config
   without --set/--unset, mcp, mcp test, clean --preview, and model, effort, fast, accounts or mux without an argument
   (they list the choices, the current one marked *).
 - Change state; only when the user asks: model/effort/fast/accounts/mux with an argument, compact, msg, rename, bubble,
-  trust/untrust, plugin enable/disable/inherit/new, plugin config --set/--unset, mcp login/logout. A running TUI
+  trust/untrust, plugin enable/disable/inherit/update/new, plugin config --set/--unset, mcp login/logout. A running TUI
   shows a changed model, effort or account within a few seconds.
 - Never without an explicit request, and never on your own conversation: delete, stop, clean (without --preview),
   pull, login. They end agents, remove data, replace the binary or open a browser sign-in.

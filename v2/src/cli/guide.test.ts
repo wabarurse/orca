@@ -24,6 +24,8 @@ test("orca2 skill prints every usage line of orca2 help, plugin help and the mcp
   expect(lines.length).toBeGreaterThan(20);
   for (const line of lines) expect(guide.text).toContain(line);
   expect(USAGE).toContain("orca2 skill");
+  expect(guide.text).toContain("orca2 plugin update <name>");
+  expect(guide.text).toContain("orca2 stop --conversation id (or /stop)");
 });
 
 test("ensureBuiltinSkills installs the thin orca2 skill that runs orca2 skill", async () => {
