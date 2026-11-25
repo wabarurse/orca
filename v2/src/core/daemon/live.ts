@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { parseJson, paths } from "../../config";
 import { z } from "zod";
 import { MessageRecord } from "../inbox";
+import { RoleRecord } from "../roles";
 import { OpenSpanRecord, SpanRecord } from "../spans";
 import type { AgentEvent } from "../types";
 
 const Call = z.object({ id: z.string(), name: z.string(), input: z.unknown() });
 const Status = z.enum(["done", "cancelled", "failed"]);
 const EventRecord: z.ZodType<AgentEvent> = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("start"), agent: z.string(), role: z.enum(["orchestrator", "worker", "reviewer"]), model: z.string() }),
+  z.object({ kind: z.literal("start"), agent: z.string(), role: RoleRecord, model: z.string() }),
   z.object({ kind: z.literal("input"), messages: z.array(MessageRecord) }),
   z.object({ kind: z.literal("text"), text: z.string() }),
   z.object({ kind: z.literal("tool_start"), call: Call }),

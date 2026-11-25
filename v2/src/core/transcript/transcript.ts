@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
 import { MessageRecord } from "../inbox";
+import { RoleRecord } from "../roles";
 import type { Entry, NewEntry } from "../types";
 import { publish } from "./storage";
 import { paired, pairResults } from "./pairs";
@@ -21,11 +22,10 @@ export type Transcript = {
 const MessageShape = z.object({ role: z.enum(["user", "assistant"]), content: z.union([z.string(), z.array(z.looseObject({ type: z.string() }))]) });
 const Message = z.custom<MessageParam>(value => MessageShape.safeParse(value).success);
 const Base = { uuid: z.string(), parent: z.string().nullable(), ts: z.string() };
-const Role = z.enum(["orchestrator", "worker", "reviewer"]);
 const EntryRecord: z.ZodType<Entry> = z.discriminatedUnion("type", [
   z.object({ ...Base, type: z.literal("message"), message: Message, inbox: z.array(MessageRecord) }),
   z.object({ ...Base, type: z.literal("summary"), text: z.string(), retained: z.array(Message), memory: z.object({ summary: z.array(z.string()), pending: z.array(z.string()) }).nullable() }),
-  z.object({ ...Base, type: z.literal("meta"), role: Role, agent: z.string(), model: z.string(), plugins: z.array(z.string()) }),
+  z.object({ ...Base, type: z.literal("meta"), role: RoleRecord, agent: z.string(), model: z.string(), plugins: z.array(z.string()) }),
   z.object({ ...Base, type: z.literal("replies"), messages: z.array(z.object({ from: z.string(), text: z.string() })) }),
 ]);
 
