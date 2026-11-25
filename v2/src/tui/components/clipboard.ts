@@ -122,3 +122,17 @@ export async function writeClipboardText(text: string, adapter: ClipboardWriter 
   if (xclip !== null) return adapter.run([xclip, "-selection", "clipboard", "-in"], text);
   return fail("no local clipboard writer; use existing wl-copy or xclip. nothing was installed.");
 }
+export async function readClipboardText(adapter: ClipboardAdapter = native): Promise<Result<string>> {
+  if (overSsh(adapter.env)) return fail("text paste from the clipboard needs a local desktop session; use your terminal's paste.");
+  const limit = 4 * 1024 * 1024;
+  let argv: string[] | null = null;
+  if (adapter.platform === "darwin") argv = ["/usr/bin/pbpaste"];
+  else if (adapter.platform === "linux") {
+    const wl = toolFor(adapter, "WAYLAND_DISPLAY", "wl-paste");
+    const xclip = toolFor(adapter, "DISPLAY", "xclip");
+    argv = wl !== null ? [wl, "--no-newline", "--type", "text/plain"] : xclip !== null ? [xclip, "-selection", "clipboard", "-o"] : null;
+  }
+  if (argv === null) return fail("no local clipboard reader; use your terminal's paste.");
+  const read = await adapter.run(argv, limit);
+  return read.ok ? ok(Buffer.from(read.data).toString("utf8")) : read;
+}
