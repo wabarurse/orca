@@ -133,9 +133,27 @@ export async function writeNode(bubble: string, write: NodeWrite, author: string
     await writeFileAtomic(nodeFile(bubble, node.id), serializeNode(node));
     await writeFileAtomic(versionFile(bubble), crypto.randomUUID());
     loaded.delete(bubble);
-    const all = await memoryNodes(bubble);
-    await writeFileAtomic(join(memoryDir(bubble), "INDEX.md"), ["# Memory index", "Each line is a node file (`<id>.md` in this folder) and its one-line summary. Open the file for the dated detail.", "",
-      ...all.map(n => `- ${n.id} — ${n.summary}`), ""].join("\n"));
+    await writeIndex(bubble);
     return ok(node);
+  });
+}
+async function writeIndex(bubble: string): Promise<void> {
+  const all = await memoryNodes(bubble);
+  await writeFileAtomic(join(memoryDir(bubble), "INDEX.md"), ["# Memory index", "Each line is a node file (`<id>.md` in this folder) and its one-line summary. Open the file for the dated detail.", "",
+    ...all.map(n => `- ${n.id} — ${n.summary}`), ""].join("\n"));
+}
+export async function replaceNodes(bubble: string, nodes: readonly MemoryNode[]): Promise<Result<number>> {
+  const bad = nodes.find(node => nodeIdProblem(node.id) !== null);
+  if (bad !== undefined) return fail(nodeIdProblem(bad.id) ?? "invalid node");
+  return withStorageLock(join(bubbleDir(bubble), ".memory-lock"), async (): Promise<Result<number>> => {
+    for (const node of nodes) {
+      await mkdir(dirname(nodeFile(bubble, node.id)), { recursive: true });
+      await writeFileAtomic(nodeFile(bubble, node.id), serializeNode(node));
+    }
+    await mkdir(memoryDir(bubble), { recursive: true });
+    await writeFileAtomic(versionFile(bubble), crypto.randomUUID());
+    loaded.delete(bubble);
+    await writeIndex(bubble);
+    return ok(nodes.length);
   });
 }

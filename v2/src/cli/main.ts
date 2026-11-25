@@ -9,10 +9,10 @@ import { agentProcess } from "../core/process/agent";
 import { command as coreCommand } from "../core/commands";
 import { runCommand } from "./commands";
 import { runMcp } from "./mcp";
-import { agentGuide, USAGE } from "./guide";
+import { agentGuide, BUBBLE_MERGE_USAGE, USAGE } from "./guide";
 import { runPlugin } from "./plugin";
 import { runSpans } from "./spans";
-import { listBubbles, setBubbleDirectory } from "../core/bubbles";
+import { listBubbles, mergeBubbles, removeUnusedBubble, renderMerge, setBubbleDirectory } from "../core/bubbles";
 import { runClean } from "./scripts/clean";
 import { pull } from "./scripts/pull";
 import { reloadRunningDaemons } from "../core/install";
@@ -83,9 +83,27 @@ export async function main(argv: string[]): Promise<number> {
     for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no home folder)"}\n`);
     return 0;
   }
+  if (command === "bubble" && args[0] === "merge" && option(args, "--dir") === null) {
+    const names = args.slice(1).filter(a => !a.startsWith("--")), unknown = args.slice(1).filter(a => a.startsWith("--") && a !== "--dry-run" && a !== "--force");
+    const [from, into] = names;
+    if (from === undefined || into === undefined || names.length !== 2 || unknown.length > 0) { out(`usage: ${BUBBLE_MERGE_USAGE}\n`); return 2; }
+    const dryRun = args.includes("--dry-run");
+    const merged = await mergeBubbles(from, into, { dryRun, force: args.includes("--force"), now: new Date().toISOString() });
+    if (!merged.ok) return refuse(merged.error);
+    out(renderMerge(merged.data, dryRun));
+    return 0;
+  }
+  if (command === "bubble" && args[0] === "remove" && option(args, "--dir") === null) {
+    const which = args[1];
+    if (which === undefined || args.length !== 2) { out("usage: orca2 bubble remove <name|id>\n"); return 2; }
+    const removed = await removeUnusedBubble(which);
+    if (!removed.ok) return refuse(removed.error);
+    out(`removed ${removed.data.name} (${removed.data.id})\n`);
+    return 0;
+  }
   if (command === "bubble") {
     const which = args[0], dir = option(args, "--dir");
-    if (which === undefined || which.startsWith("--") || dir === null) { out("usage: orca2 bubble <name|id> --dir <folder>\n"); return 2; }
+    if (which === undefined || which.startsWith("--") || dir === null) { out(`usage: orca2 bubble <name|id> --dir <folder>\n  ${BUBBLE_MERGE_USAGE}\n  orca2 bubble remove <name|id>\n`); return 2; }
     const matches = (await listBubbles()).filter(b => b.id === which || b.name === which);
     if (matches.length !== 1) return refuse(matches.length === 0 ? `no bubble ${which}` : `${matches.length} bubbles are named ${which}; use its id`);
     const target = matches[0];
