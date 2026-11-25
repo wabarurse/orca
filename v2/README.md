@@ -56,6 +56,16 @@ bun run check && bun run lint && bun test
 - **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches. A bubble's
   folder is its home, not a limit: the bubble picker (new chat, Ctrl+N, the Bubbles tab) lists the bubbles whose
   folder holds the chat's folder first, then every other bubble labelled with its folder, and any of them can be joined.
+  `orca2 bubble merge <from> <into> [--dry-run] [--force]` merges two bubbles (CLI only): memory nodes with distinct
+  ids are copied, same-id nodes get the union of their dated entries (duplicates dropped, current/retired kept, by date;
+  `<into>`'s title and summary win) and INDEX.md is rebuilt; `<from>`'s notebook pages (archived ones too) are added,
+  a clashing page id gets a new id and memory references to it are rewritten; behavior lines are unioned without
+  duplicates, and a union over the 20-line cap fails before writing and lists the lines (`--force` keeps `<into>`'s
+  lines first and drops the rest); `<from>`'s chats move to `<into>`; plugin switches are unioned with `<into>` winning;
+  `<from>`'s plugin data files that `<into>` lacks are copied, clashes listed and skipped. It refuses while either
+  bubble's chats run an orchestrator or agent (an open TUI with none running is not detected). `--dry-run` prints the
+  plan without writing. `<from>` is kept, renamed "`<name>` (merged into `<into>`)" with no chats, until
+  `orca2 bubble remove <name|id>` (which refuses a bubble that still has chats) deletes it.
 - **Headless**: `orca2 -p "task"` runs the orchestrator in-process until its subagents finish and prints the answer;
   `--json` prints every event (start, input, text, tool_start, tool_end, notice, usage, span_start, span_end, end) as JSON lines.
 - **Spans**: every model request, tool call, wait (for a worker, for input), worker launch, blocking compaction and

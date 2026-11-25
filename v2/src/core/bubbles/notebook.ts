@@ -37,6 +37,7 @@ async function evict(bubble: string, pages: Page[], keep: string, now: string): 
     await rename(from, pageFile(bubble, coldest));
   }
 }
+export const pageIndex = index;
 export async function listPages(bubble: string): Promise<Page[]> {
   const pages = await index(bubble);
   return pages.ok ? pages.data.sort((a, b) => b.usedAt.localeCompare(a.usedAt)) : [];
@@ -104,6 +105,33 @@ export async function purgeNotebook(bubble: string, now = Date.now(), days = ARC
     for (const page of expired) await rm(pageFile(bubble, page), { force: true });
     await save(bubble, pages.filter(p => !expired.includes(p)));
     return ok(expired);
+  });
+}
+export async function copyPages(from: string, into: string, renames: ReadonlyMap<string, string>, now = new Date().toISOString()): Promise<Result<Page[]>> {
+  const source = await index(from);
+  if (!source.ok) return source;
+  return locked(into, async pages => {
+    const taken = new Set(pages.map(p => p.id)), added: Page[] = [];
+    for (const page of source.data) {
+      const id = renames.get(page.id) ?? page.id;
+      if (taken.has(id)) return fail(`notebook page ${id} already exists in the target; run the merge again`);
+      taken.add(id);
+      added.push({ ...page, id });
+    }
+    await mkdir(join(dir(into), "archive"), { recursive: true });
+    for (const [n, page] of added.entries()) {
+      const original = source.data[n];
+      if (original === undefined) continue;
+      const file = Bun.file(pageFile(from, original));
+      if (!await file.exists()) continue;
+      const target = pageFile(into, page), temp = `${target}.${crypto.randomUUID()}.tmp`;
+      await Bun.write(temp, file);
+      await rename(temp, target);
+    }
+    pages.push(...added);
+    await evict(into, pages, "", now);
+    await save(into, pages);
+    return ok(added);
   });
 }
 export function renderPages(pages: Page[], limit = 30): string {

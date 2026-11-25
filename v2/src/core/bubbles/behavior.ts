@@ -40,3 +40,12 @@ export async function setBehavior(scope: BehaviorScope, line: BehaviorLine | { k
     return ok(rows);
   });
 }
+
+export async function replaceBehavior(scope: BehaviorScope, rows: readonly BehaviorLine[]): Promise<Result<BehaviorLine[]>> {
+  if (rows.length > BEHAVIOR.lines) return fail(`${rows.length} behavior lines is over the limit of ${BEHAVIOR.lines}`);
+  if (new Set(rows.map(row => row.key)).size !== rows.length) return fail("behavior keys must be distinct");
+  return withStorageLock(`${file(scope)}.lock`, async () => {
+    await writeFileAtomic(file(scope), JSON.stringify(rows, null, 2));
+    return ok([...rows]);
+  });
+}
