@@ -8,6 +8,7 @@ import { registerBuiltins, availablePlugins, loadForCheck } from "../core/plugin
 import { tempHome } from "../test/home";
 import { runPlugin } from "./plugin";
 import { pluginTemplate } from "./template";
+const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you /stop it (or orca2 stop --conversation <id>) and reopen orca2.\n";
 const home = tempHome("plugin-cli");
 async function cli(...args: string[]) {
   let output = "";
@@ -104,7 +105,7 @@ test("enable groups new approvals and prints one confirmation for the requested 
   expect(await run(true)).toBe(0);
   const question = "Allow brief-two and brief-three to run with your permissions?";
   expect(prompts).toEqual([question, question]);
-  expect(output).toBe("Enabled brief-one, brief-two, and brief-three globally.\n");
+  expect(output).toBe("Enabled brief-one, brief-two, and brief-three globally.\n" + RESTART);
   const alreadyApproved = await cli(...args);
   expect(alreadyApproved).toEqual({ code: 0, output });
 });
@@ -137,7 +138,7 @@ test("update re-approves a changed plugin and leaves every scope's on/off alone"
   await writeFile(join(dir, "note.txt"), "edited in place");
   expect((await availablePlugins(null, false)).problems.find(p => p.name === name)?.problem).toBe(`not approved (changed): run orca2 plugin update ${name}`);
   expect(await cli("update", name)).toEqual({ code: 3, output: `Approval needed for ${name}. Use --yes to approve.\n` });
-  expect((await cli("update", name, "--yes")).output).toBe(`Updated ${name}.\n`);
+  expect((await cli("update", name, "--yes")).output).toBe(`Updated ${name}.\n${RESTART}`);
   const after = await loadConfig();
   expect(after.plugins).toEqual(before.plugins);
   expect(after.approved.filter(pin => pin.startsWith(name + "@"))).toHaveLength(1);
@@ -158,7 +159,7 @@ test("update --from copies the folder and refuses new, built-in and misused name
   await mkdir(work, { recursive: true });
   await writeFile(join(work, "index.ts"), pluginTemplate(name)["index.ts"] ?? "");
   await writeFile(join(work, "extra.txt"), "new file");
-  expect((await cli("update", name, "--from", work, "--yes")).output).toBe(`Updated ${name}.\n`);
+  expect((await cli("update", name, "--from", work, "--yes")).output).toBe(`Updated ${name}.\n${RESTART}`);
   expect(await Bun.file(join(paths.plugins, name, "extra.txt")).text()).toBe("new file");
   expect((await cli("update", name, "--from", work, "--yes")).output).toBe(`${name} is up to date\n`);
   expect((await loadConfig()).plugins).toContain(name);

@@ -144,6 +144,7 @@ async function pluginScope(args: string[], readOnly: boolean): Promise<Result<Sc
 }
 
 const namesInText = new Intl.ListFormat("en", { type: "conjunction" });
+const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you /stop it (or orca2 stop --conversation <id>) and reopen orca2.\n";
 
 async function switches(names: string[], scope: Scope, state: "on" | "off" | null, out: Out): Promise<number> {
   const list = namesInText.format(names);
@@ -160,7 +161,7 @@ async function switches(names: string[], scope: Scope, state: "on" | "off" | nul
   const where = scope.bubble === null ? "globally" : `for ${scope.bubble.name}`;
   const message = state === null ? `Restored global defaults for ${list} in ${scope.bubble?.name}.`
     : `${state === "on" ? "Enabled" : "Disabled"} ${list} ${where}.`;
-  out(message + "\n");
+  out(message + "\n" + RESTART);
   return 0;
 }
 
@@ -283,7 +284,7 @@ async function update(names: string[], flags: string[], out: Out, ask: Ask, inte
   const installed = await installAndApprove(locals, { from, yes: flags.includes("--yes"), out, ask, interactive });
   if (installed !== null) return installed;
   for (const name of current) out(`${name} is up to date\n`);
-  if (locals.length > 0) out(`Updated ${namesInText.format(locals.map(p => p.name))}.\n`);
+  if (locals.length > 0) out(`Updated ${namesInText.format(locals.map(p => p.name))}.\n${RESTART}`);
   return 0;
 }
 
