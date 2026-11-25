@@ -12,6 +12,8 @@ import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
 import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
+import { main } from "../cli/main";
+import { COMMANDS, type Run } from "../core/commands";
 import { App } from "./app";
 import type { Key, screens, Terminal } from "./components";
 
@@ -137,10 +139,50 @@ describe("tui", () => {
     expect(await t.shows("login cancelled")).not.toContain("waiting for login");
     await t.type("/login gemini");
     await t.press({ name: "enter" });
-    await t.shows("/usage: login anthropic|openai");
+    await t.shows("/login: usage: login anthropic|openai");
     await t.type("/accounts");
     await t.press({ name: "enter" });
-    expect(await t.shows("no accounts")).toContain("no accounts; /login signs in");
+    expect(await t.shows("no accounts")).toContain("/accounts: no accounts; login signs in");
+  });
+
+  test("every runnable slash command and its orca2 CLI command call the same table entry with the same arguments", async () => {
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    const calls: string[] = [];
+    const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
+    for (const c of COMMANDS) if (c.run !== null) c.run = async (args, ctx) => { calls.push(`${c.name} ${args.join(",")} ${(await ctx.conversation()).ok ? "chat" : "none"}`); return { ok: true, data: `ran ${c.name}` }; };
+    const write = process.stdout.write.bind(process.stdout);
+    try {
+      for (const c of COMMANDS.filter(x => x.run !== null)) {
+        process.stdout.write = (): boolean => true;
+        try { expect(await main([c.name, "arg", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+        await t.type(`/${c.name} arg`);
+        await t.press({ name: "enter" });
+        await t.shows(`ran ${c.name}`);
+      }
+    } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
+    const runnable = COMMANDS.filter(c => c.run !== null).map(c => c.name);
+    expect(calls).toEqual(runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]));
+    t.app.stop();
+  });
+
+  test("a model, effort or fast change made through the CLI shows in a running TUI's header on its next poll", async () => {
+    await saveConfig({ model: "claude-opus-5-5" });
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    const header = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (): boolean => true;
+    try {
+      expect(await main(["effort", "high", "--conversation", id])).toBe(0);
+      expect(await main(["fast", "on", "--conversation", id])).toBe(0);
+    } finally { process.stdout.write = write; }
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    expect(header()).toContain("claude-opus-5-5 · high · fast");
+    expect(t.app["conversation"].effort).toBe("high");
+    await saveConfig({ model: "claude-sonnet-5-5" });
+    t.app.stop();
   });
 
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {

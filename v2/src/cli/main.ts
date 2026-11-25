@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { BUILD_ID, errorMessage, fail, ok, type Result } from "../config";
 import { conversationFor, listConversations, readConversation } from "../core/conversations";
-import { removeConversation, renameConversation } from "../core/lifecycle";
+import { removeConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
-import { ensureDaemon, say, stopDaemon } from "../core/daemon/client";
+import { ensureDaemon, say } from "../core/daemon/client";
 import { runHeadless } from "../core/headless";
 import { agentProcess } from "../core/process/agent";
-import { setTrust } from "../core/trust";
-import { runAccounts, runLogin } from "./login";
+import { command as coreCommand } from "../core/commands";
+import { runCommand } from "./commands";
 import { runMcp } from "./mcp";
 import { agentGuide, USAGE } from "./guide";
 import { runPlugin } from "./plugin";
@@ -31,7 +31,7 @@ async function ask(question: string): Promise<boolean> {
 }
 
 async function conversationArg(args: string[]): Promise<Result<string>> {
-  const given = option(args, "--conversation");
+  const given = option(args, "--conversation") ?? process.env.ORCA_CONVERSATION ?? null;
   if (given !== null) {
     if (await readConversation(given) === null) return fail(`no conversation ${given}`);
     return ok(given);
@@ -71,28 +71,12 @@ export async function main(argv: string[]): Promise<number> {
     out(`sent to ${conversation}\n`);
     return 0;
   }
-  if (command === "stop") {
-    const picked = await conversationArg(args);
-    if (!picked.ok) return refuse(picked.error);
-    await stopDaemon(picked.data);
-    return 0;
-  }
   if (command === "delete") {
     const conversation = option(args, "--conversation");
     if (conversation === null) { out("usage: orca2 delete --conversation <id>  (stops its agents, removes its folder, $ORCA_DATA and worktrees)\n"); return 2; }
     const removed = await removeConversation(conversation, out);
     if (!removed.ok) return refuse(removed.error);
     out(`deleted ${conversation}\n`);
-    return 0;
-  }
-  if (command === "rename") {
-    const name = args[0];
-    if (name === undefined || name.startsWith("--")) { out("usage: orca2 rename \"name\" [--conversation id]\n"); return 2; }
-    const picked = await conversationArg(args.slice(1));
-    if (!picked.ok) return refuse(picked.error);
-    const renamed = await renameConversation(picked.data, name);
-    if (!renamed.ok) return refuse(renamed.error);
-    out(`renamed ${picked.data} to ${renamed.data.conversation.name}${renamed.data.bubble === null ? "" : " (its bubble too)"}\n`);
     return 0;
   }
   if (command === "bubbles") {
@@ -118,9 +102,6 @@ export async function main(argv: string[]): Promise<number> {
     return runSpans(picked.data, args.includes("--json"), out);
   }
   if (command === "list") { for (const c of await listConversations()) out(`${c.id}  ${c.name.padEnd(16)} ${c.directory}\n`); return 0; }
-  if (command === "login") return runLogin(args, out);
-  if (command === "accounts") return runAccounts(out);
-  if (command === "trust" || command === "untrust") { await setTrust(args[0] ?? process.cwd(), command === "trust"); out(`${command}ed ${args[0] ?? process.cwd()}\n`); return 0; }
   if (command === "mcp") return runMcp(args, line => { out(`${line}\n`); });
   if (command === "plugin") return runPlugin(args, out, ask, process.stdin.isTTY === true);
   if (command === "clean") return runClean(args, out);
@@ -137,6 +118,8 @@ export async function main(argv: string[]): Promise<number> {
   if (command === "skill") { out(await agentGuide(process.env.ORCA_CONVERSATION ?? null)); return 0; }
   if (command === "version" || command === "--version") { out(`orca2 ${BUILD_ID}\n`); return 0; }
   if (command === "help" || command === "--help" || command === "-h") { out(`usage:\n  ${USAGE}\n`); return 0; }
+  const core = command === undefined ? null : coreCommand(command);
+  if (core !== null) return runCommand(core, args, out, text => { process.stderr.write(text); });
   if (command === undefined || command === "start" || !command.startsWith("-")) {
     const { startTui } = await import("../tui/app");
     return startTui(command === "start" ? args[0] ?? process.cwd() : command ?? process.cwd());

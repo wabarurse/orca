@@ -2,25 +2,24 @@ import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
-import { accounts, parseLogin, signIn, type LoginRequest, type ProviderName } from "../api/auth";
 import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
-import { removeConversation, renameConversation } from "../core/lifecycle";
-import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
+import { removeConversation } from "../core/lifecycle";
+import { cancel, ensureDaemon, say, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
-import { SLASH_COMMANDS } from "../core/slash-commands";
+import { COMMANDS, command as coreCommand, type CommandContext, type CoreCommand, type Run } from "../core/commands";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
 import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
-import { chooseRunner, runnerNames, runners, stopAgent } from "../core/runner/runtime";
+import { runners, stopAgent } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
-import { setTrust, trustState } from "../core/trust";
+import { trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { bold, dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, screens, writeClipboardText, whaleRows, wordWrap, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
@@ -30,7 +29,7 @@ import { archiveItems, restoreItems, shelfEntry, shelfKey } from "../core/shelf"
 import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail, userItem } from "./view";
 import { renderWork, type WorkTab } from "./work";
-import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
+import { learnModel, type Choice } from "../core/settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
@@ -213,20 +212,32 @@ export class App {
       if (n !== null && n > 0) parts.push(count.label(n));
     }
     this.counts = parts.join(" │ ");
-    const config = await loadConfig();
-    const meta = await readConversation(id);
-    this.model = meta?.model ?? config.model;
-    this.learn(this.model);
-    this.settings = settingsLabel(meta);
-    this.bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
-    this.noBubble = meta?.noBubble === true;
-    this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
+    await this.refreshHeader();
     for (const tab of this.openTabs) {
       if (tab.id === id) { tab.busy = this.busy; continue; }
       const status = await readStatus(tab.id);
       tab.busy = status !== null && status.state === "turn" && await daemonPid(tab.id) !== null;
     }
     if (this.page !== null) await this.loadPage();
+  }
+
+  private async refreshHeader(): Promise<void> {
+    const id = this.conversation.id;
+    const config = await loadConfig();
+    const meta = await readConversation(id);
+    const bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    if (this.conversation.id !== id) return;
+    if (meta !== null) {
+      this.current = { conversation: meta, transcript: this.transcript };
+      const tab = this.openTabs.find(t => t.id === id);
+      if (tab !== undefined && tab.name !== meta.name) { tab.name = meta.name; this.deps.terminal.setTitle?.(`orca2 · ${meta.name}`); }
+    }
+    this.model = meta?.model ?? config.model;
+    this.learn(this.model);
+    this.settings = settingsLabel(meta);
+    this.bubbleName = bubbleName;
+    this.noBubble = meta?.noBubble === true;
+    this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
   }
 
   private async answerConfirms(): Promise<void> {
@@ -371,20 +382,6 @@ export class App {
     this.draw();
   }
 
-  private async rename(args: string): Promise<void> {
-    const requested = args.trim().length > 0 ? args : await this.ask({ kind: "input", prompt: "rename to ", initial: this.conversation.name });
-    if (requested === null) return;
-    const renamed = await renameConversation(this.conversation.id, requested);
-    if (!renamed.ok) { this.flash(`/rename: ${renamed.error}`, true); return; }
-    const { conversation, bubble } = renamed.data;
-    this.current = { conversation, transcript: this.transcript };
-    const tab = this.openTabs.find(t => t.id === conversation.id);
-    if (tab !== undefined) tab.name = conversation.name;
-    if (bubble !== null) this.bubbleName = bubble;
-    this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
-    this.flash(`renamed to ${conversation.name}${bubble === null ? "" : " (its bubble too)"}`);
-  }
-
   private async closeTab(): Promise<void> {
     if (this.openTabs.length < 2) { this.flash("the last open chat stays open"); return; }
     const at = this.openTabs.findIndex(tab => tab.id === this.conversation.id);
@@ -454,136 +451,68 @@ export class App {
   private async command(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
-    const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ${SLASH_COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
-    if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
-    if (name === "rename") { await this.rename(args); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "close") { await this.closeTab(); return; }
-    if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
-    if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
-    if (name === "model" || name === "effort" || name === "fast" || name === "accounts") { await this.setting(name, args.trim()); return; }
-    if (name === "login") { await this.loginCommand(args.trim()); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
-    if (name === "mux") { await this.mux(args.trim()); return; }
+    const core = coreCommand(name);
+    if (core !== null && core.run !== null) { await this.runCore(core, core.run, rest.filter(a => a.length > 0)); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`, true); }
   }
 
+  private commandContext(signal: AbortSignal | null, write: (text: string) => void): CommandContext {
+    const id = this.conversation.id;
+    const fallback = this.conversation;
+    return {
+      conversation: async () => ok((await readConversation(id)) ?? fallback),
+      directory: this.deps.directory,
+      ensureDaemon: conversation => this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error))),
+      write,
+      openBrowser: async url => { await this.deps.openUrl(url); },
+      signal,
+    };
+  }
+
+  private async runCore(c: CoreCommand, run: Run, given: string[]): Promise<void> {
+    if (c.name === "login" && this.signing !== null) { this.flash("a sign-in is already waiting; esc cancels it", true); return; }
+    const signing = c.name === "login" ? { controller: new AbortController(), text: "signing in…   esc cancels" } : null;
+    const ctx = this.commandContext(signing === null ? null : signing.controller.signal, text => { if (signing !== null) { signing.text = `${text.trim()}   esc cancels`; this.draw(); } });
+    let args = given;
+    if (args.length === 0 && c.ask !== null) {
+      if (c.ask.kind === "input") {
+        const typed = await this.ask({ kind: "input", prompt: c.ask.prompt, initial: await c.ask.initial(ctx) });
+        if (typed === null) return;
+        args = [typed];
+      } else {
+        const listed = await c.ask.choices(ctx);
+        if (!listed.ok) { this.flash(`/${c.name}: ${listed.error}`, true); return; }
+        const picked = await this.choose(listed.data.title, listed.data.choices);
+        if (picked === null) return;
+        args = [picked];
+      }
+    }
+    this.signing = signing;
+    this.draw();
+    const done = await run(args, ctx).catch((error: unknown) => fail(errorMessage(error)));
+    if (signing !== null) this.signing = null;
+    if (!done.ok) { this.flash(`/${c.name}: ${done.error}`, true); return; }
+    await this.refreshHeader();
+    this.flash(done.data);
+  }
+
   private async choose<T>(title: string, choices: Choice<T>[]): Promise<T | null> {
     if (choices.length === 0) return null;
     const at = choices.findIndex(c => c.current);
-    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.label), current: at === -1 ? null : at });
+    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.detail.length > 0 ? `${c.label}  ${dim(c.detail)}` : c.label), current: at === -1 ? null : at });
     return picked === null ? null : choices[picked]?.value ?? null;
-  }
-
-  private async setting(name: "model" | "effort" | "fast" | "accounts", arg: string): Promise<void> {
-    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
-    const model = conversation.model ?? (await loadConfig()).model;
-    let saved: Result<Conversation> | null = null;
-    let note = "";
-    if (name === "model") {
-      let wanted: string | null = arg;
-      if (wanted.length === 0) {
-        const offered = await modelChoices(model);
-        if (!offered.ok) { this.flash(offered.error, true); return; }
-        wanted = await this.choose("switch model   (/accounts for another provider)", offered.data);
-      }
-      if (wanted === null) return;
-      saved = await setModel(conversation, wanted);
-      note = `model ${wanted} from the next request`;
-    } else if (name === "effort") {
-      await learnModel(model);
-      const level = arg.length > 0 ? arg : await this.choose(`effort for ${model}   (/effort <level|default> sets directly)`, effortChoices(model, conversation.effort));
-      if (level === null) return;
-      saved = await setEffort(conversation, level);
-      note = `effort for ${model}: ${level} from the next request`;
-    } else if (name === "fast") {
-      if (arg.length > 0 && arg !== "on" && arg !== "off") { this.flash("usage: /fast [on|off]", true); return; }
-      await learnModel(model);
-      const on = arg.length > 0 ? arg === "on" : await this.choose(`fast mode for ${model}   (/fast on|off sets directly)`, fastChoices(conversation.fast));
-      if (on === null) return;
-      saved = await setFast(conversation, on);
-      note = `fast for ${model}: ${on ? "on" : "off"} from the next request`;
-    } else {
-      const listed = await accountChoices(model);
-      if (listed.length === 0) { this.flash("no accounts; /login signs in"); return; }
-      const account = await this.choose("accounts: enter uses one for this chat", listed);
-      if (account === null) return;
-      const used = await useAccount(conversation, account);
-      saved = used.ok ? ok(used.data.conversation) : used;
-      note = used.ok ? used.data.note : "";
-    }
-    this.saved(saved, model, note);
-  }
-
-  private saved(saved: Result<Conversation>, model: string, note: string): void {
-    if (!saved.ok) { this.flash(saved.error, true); return; }
-    if (saved.data.id === this.conversation.id) {
-      this.current = { conversation: saved.data, transcript: this.transcript };
-      this.model = saved.data.model ?? model;
-      this.learn(this.model);
-      this.settings = settingsLabel(saved.data);
-      this.lastSlow = 0;
-    }
-    this.flash(note);
-  }
-
-  private async loginCommand(arg: string): Promise<void> {
-    if (arg.length > 0) {
-      const request = parseLogin(arg.split(/\s+/));
-      if (request.ok) await this.login(request.data); else this.flash(`/${request.error}`, true);
-      return;
-    }
-    const provider = await this.choose<ProviderName>("sign in   (/login <provider> [profile] [--import] sets directly)", [
-      { value: "anthropic", label: `anthropic  ${dim("claude subscription")}`, current: false },
-      { value: "openai", label: `openai     ${dim("chatgpt / codex subscription")}`, current: false },
-    ]);
-    if (provider !== null) await this.login({ provider, profile: "default", imported: false });
-  }
-
-  private async login(request: LoginRequest): Promise<void> {
-    if (this.signing !== null) { this.flash("a sign-in is already waiting; esc cancels it", true); return; }
-    const id = `${request.provider}:${request.profile}`;
-    const signing = { controller: new AbortController(), text: `signing in to ${id}…   esc cancels` };
-    this.signing = signing;
-    this.draw();
-    const signed = await signIn(request, {
-      write: text => { signing.text = `${text.trim()}   esc cancels`; this.draw(); },
-      openBrowser: async url => { await this.deps.openUrl(url); },
-      signal: signing.controller.signal,
-    }).catch((error: unknown) => fail(errorMessage(error)));
-    this.signing = null;
-    if (!signed.ok) { this.flash(signed.error, true); return; }
-    const account = (await accounts()).find(a => a.provider === request.provider && a.profile === request.profile);
-    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
-    const model = conversation.model ?? (await loadConfig()).model;
-    if (account === undefined || !account.ok) { this.flash(`signed in to ${id}, but it does not show as signed in yet`, true); return; }
-    const used = await useAccount(conversation, account);
-    this.saved(used.ok ? ok(used.data.conversation) : used, model, used.ok ? `signed in to ${id}; ${used.data.note}` : "");
   }
 
   private commands(): { name: string }[] {
     const seen = new Map<string, { name: string }>();
     for (const command of this.uis.flatMap(bound => bound.ui.commands)) if (!seen.has(command.name)) seen.set(command.name, command);
     return [...seen.values()];
-  }
-
-  private async mux(wanted: string): Promise<void> {
-    const id = this.conversation.id;
-    const name = wanted.length > 0 ? wanted : await this.pickRunner(id);
-    if (name === null) return;
-    const chosen = await chooseRunner(id, name);
-    this.flash(chosen.ok ? `new agents start in ${chosen.data}; running ones stay where they are` : chosen.error);
-  }
-
-  private async pickRunner(conversation: string): Promise<string | null> {
-    const names = await runnerNames(conversation);
-    const current = (await loadConfig()).runner;
-    const at = names.indexOf(current);
-    const picked = await this.ask({ kind: "pick", title: "runner for new agents", options: names, current: at === -1 ? null : at });
-    return picked === null ? null : names[picked] ?? null;
   }
 
   private pluginPages(): Map<string, Tab[]> {
