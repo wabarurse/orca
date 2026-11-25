@@ -22,7 +22,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { setTrust, trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
-import { bold, dim, editor, fit, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
+import { bold, dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
@@ -306,13 +306,16 @@ export class App {
   private flash(text: string, error = false): void { this.note = text.replace(/\s+/g, " ").trim(); this.noteError = error; this.draw(); }
 
   private async key(key: Key): Promise<void> {
+    keyLog(`app ${JSON.stringify(key)} modal=${this.modal?.kind ?? "none"} page=${String(this.page !== null)}`);
     if (key.ctrl === true && key.name === "c") { await this.kill(); return; }
     if (this.modal !== null) { await this.modalKey(this.modal, key); return; }
     if (this.page !== null) { await this.pageKey(key); return; }
     this.note = "";
     this.focusComposer();
     if (key.ctrl === true && await this.chord(key)) { this.draw(); return; }
-    if (await this.input.key(key)) { this.draw(); return; }
+    const handled = await this.input.key(key);
+    keyLog(`composer ${handled ? "took" : "left"} ${JSON.stringify(key)} focused=${String(this.input.isFocused)} selection=${JSON.stringify(editor.selection(this.composer))}`);
+    if (handled) { this.draw(); return; }
     switch (key.name) {
       case "tab": await this.submit(this.busy ? "follow" : "steer"); break;
       case "escape": if (this.signing !== null) this.signing.controller.abort(); else await this.takeBack(); break;

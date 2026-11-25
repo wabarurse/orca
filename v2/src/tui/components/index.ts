@@ -1,5 +1,6 @@
 export { readClipboardImage, readClipboardText, writeClipboardText, type ClipboardImage } from "./clipboard";
 export { cleanPaste, type Key } from "./keys";
+export { keyLog, keyLogPath, KEYLOG_ENV } from "./keylog";
 export { bold, cells, dim, expandTabs, fit, LINK_CLOSE, linkOpen, plainText, RESET, sanitize, visibleLength, wordWrap, wrap } from "./text";
 export { baseText, BG_REPLY_MS, fillRow, noColour, pastel, railMark, textRow, useTerminalBackground, userFill } from "./style";
 export { shimmer } from "./shimmer";

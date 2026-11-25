@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import type { Key } from "./keys";
+import { selectionMarks } from "./style";
 import { TextInput } from "./text-input";
 
 const typing = async (input: TextInput, text: string): Promise<void> => { for (const ch of text) await input.key({ name: "char", text: ch }); };
@@ -39,7 +40,7 @@ test("a cursor move or a different kind of edit starts a new undo step", async (
 test("an unfocused input takes no keys and renders no cursor or selection; focus brings both back", async () => {
   const input = new TextInput({}, "text");
   await press(input, { name: "a", cmd: true });
-  expect(input.render(20, 3).rows[0]).toContain("\x1b[7m");
+  expect(input.render(20, 3).rows[0]).toContain(selectionMarks().on);
   input.blur();
   expect(await input.key({ name: "char", text: "x" })).toBe(false);
   const blurred = input.render(20, 3);

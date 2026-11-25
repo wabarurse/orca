@@ -91,7 +91,7 @@ focuses it (closing an open picker or confirmation, like Esc).
 | ⌘↑/⌘↓, Ctrl+Home/End | start / end of the message | ⌘: kitty keyboard |
 | ↑/↓ | previous / next row, keeping the column; on the first / last row, to the start / end; input history only from an empty composer | — |
 | Shift + any move above (⇧⌥ word, ⇧⌘ line/message, ⇧↑/↓ row) | extend the selection | as the move |
-| ⌘A, also Ctrl+⇧A or ⌥A | select all text in the input (not the screen) | ⌘A: kitty keyboard, and the terminal must not take ⌘A; Ctrl+⇧A: kitty keyboard; ⌥A: Option as Alt |
+| ⌘A, also ⌘⇧A, Ctrl+⇧A or ⌥A | select all text in the input (not the screen) | ⌘A: kitty keyboard, and the terminal must not take ⌘A; Ctrl+⇧A: kitty keyboard; ⌥A: Option as Alt |
 | typing, paste, Backspace, Delete with a selection | replace / remove the selection; an arrow collapses it | — |
 | Backspace / Delete (Fn+Delete) | delete a character back / forward; Ctrl+D forward too | — |
 | ⌥Backspace, Ctrl+W, Ctrl+Backspace / ⌥Delete (also ESC d) | delete a word back / forward | ⌥: Option as Esc/Alt |
@@ -122,15 +122,18 @@ over the app: a ⌘ key the terminal binds itself (⌘A select all, ⌘C copy, �
   Ctrl+U/Ctrl+K, Ctrl+Z/Ctrl+Y and Shift+arrows instead of the ⌘ keys; select all is not available.
 - **Rex**: speaks the kitty keyboard protocol (orca2 gets flags 5), and with it sends every ⌘ key orca2 uses:
   ⌘A arrives as `CSI 97;9u`, ⌘Z `CSI 122;9u`, ⌘⇧Z `CSI 122;10u`, ⌘← `CSI 1;9D`, ⌘Backspace `CSI 127;9u`,
-  ⌥← `CSI 1;3D`, Ctrl+⇧A `CSI 97;6u`. But the Rex app keeps ⌘A for its own *Select All in Pane*
-  (`pane.select_all`), so a pressed ⌘A never reaches the program. Give it to the terminal in `~/.config/rex/init.lua`
-  and run `rex config reload`:
+  ⌥← `CSI 1;3D`, Ctrl+⇧A `CSI 97;6u`. A ⌘A pressed on the keyboard is taken by the Rex macOS app
+  before any key binding (⌘⇧A, which no menu item uses, does arrive). To hand ⌘A to the terminal, remove Rex's
+  own ⌘A: Settings → Shortcuts, search `cmd+a`, remove it from *Select All in Pane*; if a menu still owns it,
+  move the menu's key equivalent with `defaults write com.superlogical.rex NSUserKeyEquivalents -dict-add
+  "Select All in Pane" "@~^a"` (and the same for `"Select All"`) and restart Rex. `rex.bind("cmd+a",
+  "pane.send_key", { key = "cmd+a" })` in `~/.config/rex/init.lua` alone is not enough. Meanwhile ⌘⇧A or Ctrl+⇧A
+  select all in the composer.
 
-  ```lua
-  rex.bind("cmd+a", "pane.send_key", { key = "cmd+a" })
-  ```
-
-  (`rex.unbind("cmd+a")` also frees it.) Without that, Ctrl+⇧A selects all in the composer.
+To see what a key really delivers, start orca2 with a key log (it records every key, so delete it after):
+`ORCA2_KEYLOG=/tmp/orca2-keys.log bun run dev`, press the key, then `cat /tmp/orca2-keys.log`. Each key gives a
+`key raw=…` line (the bytes and modifiers OpenTUI decoded), an `app …` line and a `composer took|left …` line;
+the first line shows the terminal and kitty keyboard flags. No line for a key means the terminal kept it.
 
 ## Plugins
 

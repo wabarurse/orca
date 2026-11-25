@@ -1,6 +1,7 @@
 import type { Result } from "../../config";
 import * as editor from "./editor";
 import { cleanPaste, type Key } from "./keys";
+import { selectionMarks } from "./style";
 import { dim, sanitize } from "./text";
 import * as history from "./undo";
 
@@ -20,8 +21,6 @@ export type InputRows = { rows: string[]; row: number; col: number; cursor: bool
 export type MousePhase = "down" | "drag" | "up";
 
 export const DOUBLE_CLICK_MS = 400;
-const SELECTED_ON = "\x1b[7m";
-const SELECTED_OFF = "\x1b[27m";
 
 export const defaultProps: TextInputProps = { placeholder: "", multiline: true, clipboard: null, onChange: null, onSubmit: null, onVertical: null, onNote: null };
 
@@ -31,7 +30,8 @@ function highlighted(row: editor.Row, sel: editor.Span | null): string {
   if (sel === null || sel.to <= row.start || sel.from >= row.end) return sanitize(row.text);
   const a = Math.max(sel.from, row.start) - row.start;
   const b = Math.min(sel.to, row.end) - row.start;
-  return `${sanitize(row.text.slice(0, a))}${SELECTED_ON}${sanitize(row.text.slice(a, b))}${SELECTED_OFF}${sanitize(row.text.slice(b))}`;
+  const marks = selectionMarks();
+  return `${sanitize(row.text.slice(0, a))}${marks.on}${sanitize(row.text.slice(a, b))}${marks.off}${sanitize(row.text.slice(b))}`;
 }
 
 export class TextInput {
