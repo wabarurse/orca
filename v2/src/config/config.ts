@@ -21,6 +21,8 @@ export type Config = {
   approved: string[];
   untrusted: string[];
   runner: Runner;
+  notifications: boolean;
+  notificationChannel: string;
 };
 
 export const defaults: Config = {
@@ -36,6 +38,8 @@ export const defaults: Config = {
   approved: [],
   untrusted: [],
   runner: "plain",
+  notifications: true,
+  notificationChannel: "auto",
 };
 
 let warned = "";
@@ -61,6 +65,8 @@ export function parseConfig(raw: Record<string, unknown>): Config {
     approved: strings(raw.approved, defaults.approved),
     untrusted: strings(raw.untrusted, defaults.untrusted),
     runner: text(raw.runner, defaults.runner),
+    notifications: flag(raw.notifications, defaults.notifications),
+    notificationChannel: text(raw.notificationChannel, defaults.notificationChannel),
   };
 }
 

@@ -21,7 +21,7 @@ import { runners, stopAgent, stopAgents } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { trustState } from "../core/trust";
-import type { AgentEvent, Message, OpenSpan } from "../core/types";
+import type { AgentEvent, Entry, Message, OpenSpan } from "../core/types";
 import { bold, dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
@@ -33,6 +33,7 @@ import { browsing, newer, older, onRecalled, sinceClear, type Browse, type Step 
 import { renderWork, type WorkTab } from "./work";
 import { pickHint, pickKey, pickRows, pickStart, type PickState } from "./pick";
 import { learnModel, type Choice } from "../core/settings";
+import { Alerts, gistOf, type Notice } from "./alerts";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
@@ -109,8 +110,10 @@ export class App {
   private pluginsPage: { plugins: Awaited<ReturnType<typeof availablePlugins>>; enabled: string[] } | null = null;
   private openTabs: { id: string; name: string; busy: boolean }[] = [];
   private bubbles: Awaited<ReturnType<typeof bubbleEntries>> = { entries: [], loose: [] };
+  private readonly alerts: Alerts;
 
   constructor(private readonly deps: AppDeps) {
+    this.alerts = new Alerts(deps.terminal, process.env);
     this.input = new TextInput({ multiline: true, clipboard: this.clipboard(),
       onSubmit: () => this.submit("steer"),
       onVertical: (dir, atEdge) => this.recall(dir, atEdge),
@@ -141,6 +144,8 @@ export class App {
 
   conversationId(): string { return this.conversation.id; }
 
+  private chat(): { id: string; name: string } { return { id: this.conversation.id, name: this.conversation.name }; }
+
   async refresh(): Promise<void> {
     this.lastSlow = Number.NEGATIVE_INFINITY;
     await this.poll();
@@ -167,6 +172,7 @@ export class App {
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     if (this.frame !== null) clearInterval(this.frame);
+    this.alerts.leave();
     this.deps.terminal.close();
   }
 
@@ -190,6 +196,7 @@ export class App {
     this.activePlugins = loaded.active;
     if (loaded.problems.length > 0) this.flash(loaded.problems.join("; "));
     this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
+    this.alerts.focus({ id: conversation.id, name: conversation.name });
     await this.startDaemon(conversation.id);
   }
 
@@ -204,6 +211,7 @@ export class App {
       this.cached = items(list, { cols: this.deps.terminal.cols, open: this.open, folds: this.folds });
       const last = [...list].reverse().find(p => p.kind === "text");
       this.lastText = last?.kind === "text" ? last.text : "";
+      this.alerts.notices(this.chat(), pluginNotices(all, this.activePlugins));
     }
     this.status = await readStatus(id);
     const turnError = this.status?.error ?? null;
@@ -212,6 +220,7 @@ export class App {
     const pid = await daemonPid(id);
     this.busy = this.status !== null && this.status.state === "turn" && pid !== null;
     this.waiting = pid !== null && this.status !== null && this.status.state === "idle" ? this.status.phase : null;
+    this.alerts.turn({ ...this.chat(), busy: this.busy, error: turnError, gist: gistOf(this.lastText) });
     if (this.busy && this.status !== null) {
       if (this.status.turns !== this.liveTurn) { this.liveTurn = this.status.turns; this.liveOffset = 0; this.events = []; }
       const read = await readLive(id, this.liveTurn, this.liveOffset);
@@ -238,6 +247,7 @@ export class App {
     const parts = [`${running} agent${running === 1 ? "" : "s"}`, `${bubbles} bubble${bubbles === 1 ? "" : "s"}`];
     for (const bound of this.uis) for (const count of bound.ui.counts) {
       const n = await count.count(bound.ctx).catch(() => null);
+      if (count.id === "questions") this.alerts.questions(this.chat(), n);
       if (n !== null && n > 0) parts.push(count.label(n));
     }
     this.counts = parts.join(" │ ");
@@ -246,6 +256,7 @@ export class App {
       if (tab.id === id) { tab.busy = this.busy; continue; }
       const status = await readStatus(tab.id);
       tab.busy = status !== null && status.state === "turn" && await daemonPid(tab.id) !== null;
+      this.alerts.turn({ id: tab.id, name: tab.name, busy: tab.busy, error: status?.error ?? null, gist: "" });
     }
     if (this.page !== null) await this.loadPage();
   }
@@ -267,6 +278,7 @@ export class App {
       const tab = this.openTabs.find(t => t.id === id);
       if (tab !== undefined && tab.name !== meta.name) { tab.name = meta.name; this.deps.terminal.setTitle?.(`orca2 · ${meta.name}`); }
     }
+    this.alerts.configure(config.notifications, config.notificationChannel);
     this.model = meta?.model ?? config.model;
     this.learn(this.model);
     this.settings = settingsLabel(meta);
@@ -857,6 +869,11 @@ const tokens = (n: number): string => n >= 1_000_000 ? `${(n / 1_000_000).toFixe
 export function settingsLabel(conversation: Conversation | null): string {
   if (conversation === null) return "";
   return `${conversation.effort !== null ? ` · ${conversation.effort}` : ""}${conversation.fast ? " · fast" : ""}`;
+}
+
+export function pluginNotices(entries: Entry[], plugins: string[]): Notice[] {
+  const from = new Set(plugins);
+  return entries.flatMap(entry => entry.type === "message" ? entry.inbox.filter(m => from.has(m.from)).map(m => ({ id: m.id, from: m.from, text: m.text })) : []);
 }
 
 export function contextLine(used: number | null, model: string): string {

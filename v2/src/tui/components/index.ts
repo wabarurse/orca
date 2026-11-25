@@ -8,6 +8,7 @@ export { linkAt, linkSpanAt, OPENABLE, underlineSpan, type LinkSpan } from "./li
 export * as screens from "./screen-view";
 export { repositoryTitle, type Terminal } from "./term";
 export { imageProtocol } from "./images";
+export { autoChannel, CHANNELS, inRex, isChannelSetting, notification, notifyChannel, passthrough, plainLine, programStatus, progress, reportsProgress, type Channel, type ChannelSetting, type Env, type ProgramStatus, type StatusKind } from "./notify";
 export { tabWindow } from "./tabs";
 export { renderMarkdown } from "./markdown";
 export * as editor from "./editor";

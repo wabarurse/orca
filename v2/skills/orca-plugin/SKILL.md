@@ -222,6 +222,8 @@ uses Ctrl+ a, b, c, d, e, h, j, k, l, n, p, u, v, w, y, z; the questions and tas
 l, q, r, a, A, u (archive and restore), the digits, Tab, Esc, PgUp/PgDn, and s on the Agents tab; any other single
 character is yours for actions, and `key: "enter"` runs on Enter.
 `tone` is normal, good, warn, bad or dim. A tab belongs to one plugin: rows cannot be added to another plugin's tab.
+A count with `id: "questions"` is read as decisions waiting for the user: when it rises the TUI sends a terminal
+notification, and while it is above 0 the tab status (OSC 7501) shows the chat as blocked on a question.
 
 The host is the tab's `PluginContext` (so `host.conversation`, `host.data(scope)` work) plus `note`, `confirm`,
 `input`, `pick`, `say` (text to the orchestrator as the user, queued as steer input; there is no receipt) and

@@ -26,7 +26,7 @@ function fakeTerminal() {
   const handed: string[][] = [];
   const state: { screen: screens.Screen | null } = { screen: null };
   const terminal: Terminal = { cols: 100, rows: 30, write() {}, onKey: cb => { keys.push(cb); }, onResize() {}, open() {}, close() {}, eraseOnExit() {},
-    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "", handOver: async argv => { handed.push(argv); return 0; } };
+    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "", signal: () => true, answersStatus: () => false, handOver: async argv => { handed.push(argv); return 0; } };
   const press = async (...list: Key[]): Promise<void> => { for (const key of list) { for (const cb of keys) cb(key); await Bun.sleep(20); } };
   const type = async (text: string): Promise<void> => { await press(...[...text].map(ch => ({ name: "char", text: ch }))); };
   const text = (): string => {
