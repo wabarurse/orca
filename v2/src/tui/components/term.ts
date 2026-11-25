@@ -22,6 +22,8 @@ export type Terminal = {
   onAction(cb: (action: ScreenAction) => void): void;
   selection(): string;
   copyOsc52?(text: string): boolean;
+  signal(sequence: string): boolean;
+  answersStatus(): boolean;
   handOver(argv: string[]): Promise<number>;
   released?: Promise<void>;
 };

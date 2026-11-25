@@ -162,6 +162,20 @@ export const COMMANDS: CoreCommand[] = [
       const current = (await loadConfig()).runner;
       return ok({ title: "runner for new agents", choices: names.map(name => ({ value: name, label: name, detail: "", current: name === current })) });
     })) },
+  { name: "notifications", args: "[on|off]", description: "turn terminal notifications and tab status (OSC 9/777/99, BEL, 9;4, 7501) on or off; saved in config.toml", scoped: false,
+    run: async args => {
+      const arg = one(args);
+      if (arg !== "on" && arg !== "off") return fail("usage: notifications on|off");
+      const saved = await saveConfig({ notifications: arg === "on" });
+      return ok(`notifications ${saved.notifications ? "on" : "off"} (channel ${saved.notificationChannel})`);
+    },
+    ask: pick(async () => {
+      const on = (await loadConfig()).notifications;
+      return ok({ title: "terminal notifications and tab status   (/notifications on|off sets directly)", choices: [
+        { value: "on", label: "on", detail: "", current: on },
+        { value: "off", label: "off", detail: "", current: !on },
+      ] });
+    }) },
   { name: "compact", args: "", description: "compact the chat's context now", scoped: true, ask: null,
     run: async (_args, ctx) => withConversation(async (conversation, c) => {
       await compactNow(conversation.id);
