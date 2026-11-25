@@ -147,6 +147,36 @@ To see what a key really delivers, start orca2 with a key log (it records every 
 `key raw=…` line (the bytes and modifiers OpenTUI decoded), an `app …` line and a `composer took|left …` line;
 the first line shows the terminal and kitty keyboard flags. No line for a key means the terminal kept it.
 
+## Terminal notifications
+
+orca2 tells the terminal what it is doing the way Claude Code does, so Rex, Ghostty, iTerm2, WezTerm and kitty show
+desktop notifications and tab status for it. Only the visible TUI writes these, never a daemon or an agent, and they go
+through OpenTUI's own output queue (`NativeSession.write`), so they never land inside a frame.
+
+- **Desktop notifications** (title `orca2`, body `<chat>: <gist>` as one plain line of at most 200 characters, with
+  escapes and control characters removed): when a turn of an open chat ends (the first paragraph of the reply, or
+  `turn failed: …`), when the chat's open questions go up (a plugin count with id `questions`, so the questions
+  plugin's Questions tab), and when a plugin's background notice reaches the orchestrator (pr-watch's merged, closed,
+  conflict or failing-check notices, say). Questions and notices are watched in the chat on screen; turn ends in every
+  open tab. Nothing is sent for what was already there when orca2 opened.
+- **Channel**: `notificationChannel` in `~/.orca2/config.toml`, Claude Code's `preferredNotifChannel` values: `auto`
+  (default), `iterm2` (OSC 9 `title: body`), `iterm2_with_bell` (OSC 9, then BEL), `kitty` (OSC 99 title, body and
+  focus), `ghostty` (OSC 777 `notify;title;body`), `terminal_bell` (BEL) or `notifications_disabled`. `auto` picks
+  `ghostty` in Rex (`REX_SESSION` or `TERM_PROGRAM=rex`), `iterm2` in iTerm2 (`TERM_PROGRAM=iTerm.app`,
+  `LC_TERMINAL=iTerm2`) and WezTerm, `kitty` in kitty (`TERM=xterm-kitty`, `KITTY_WINDOW_ID`), `ghostty` in Ghostty,
+  and BEL anywhere else (Claude Code sends nothing there).
+- **Tab status** (OSC 7501, app `orca2`, title `orca2 · <chat>`): `working` while any open chat runs a turn,
+  `blocked` with kind `question` while questions wait (it wins over working), then `done` (the reply's gist) or `error`
+  after the shown chat's last turn, `idle` before any; `state=clear` when orca2 quits. It is sent only when the
+  terminal answered OpenTUI's `OSC 7501;?` query or orca2 runs in Rex, as Claude Code sends it only after that answer.
+- **Progress** (OSC 9;4): indeterminate (`9;4;3`) while a turn runs, cleared (`9;4;0`) when none does and on quit; in
+  Rex, Ghostty 1.2+, iTerm2 3.6.6+ and ConEmu, the terminals Claude Code sends it to, plus Rex.
+- Inside tmux every sequence is wrapped for passthrough (`ESC P tmux; … ESC \`); tmux needs `set -g
+  allow-passthrough on` to forward it.
+- **On by default.** `/notifications off` (or `orca2 notifications off`) turns all of it off and clears the tab status;
+  `/notifications on` turns it back on. It is saved as `notifications` in `config.toml`, and a running TUI picks a
+  change up within a few seconds.
+
 ## Plugins
 
 A plugin is a folder with `index.ts` (tools, prompt lines, skills, storage, hooks, bundles), optionally `ui.ts`

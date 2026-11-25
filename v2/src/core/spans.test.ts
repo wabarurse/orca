@@ -57,6 +57,6 @@ test("a phase tracker keeps one open span per phase and closes it when the phase
 test("phase text reads like the activity line", () => {
   const startedAt = new Date(1_000_000).toISOString();
   expect(phaseText({ id: "a", kind: "wait-worker", label: "worker-fix-x", agent: "orchestrator", startedAt }, 1_000_000 + 72_400)).toBe("waiting for worker-fix-x (1m12s)");
-  expect(phaseText({ id: "b", kind: "model", label: "claude-opus-5-5", agent: "orchestrator", startedAt }, 1_000_000 + 8_900)).toBe("thinking… (8s)");
+  expect(phaseText({ id: "b", kind: "model", label: "claude-opus-5-5", agent: "orchestrator", startedAt }, 1_000_000 + 8_900)).toBe("swimming (8s)");
   expect(clock(-5)).toBe("0s");
 });

@@ -1,17 +1,30 @@
 import { errorMessage, fail, ok, type Result } from "../../config";
-import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent, type PasteEvent } from "@opentui/core";
+import { createCliRenderer, NativeSession, type CliRenderer, type CliRendererConfig, type KeyEvent, type PasteEvent } from "@opentui/core";
 import { BG_REPLY_MS, imageProtocol, keyLog, plainText, useTerminalBackground, type Key, type Terminal, type screens } from "../components";
 import { Display, type ScrollBy } from "./display";
 import { keyFrom, pasteFrom } from "./keys";
 
 export type PaintingTerminal = Terminal & { released: Promise<void>; launched: Promise<Result<null>> };
 
-type Live = { renderer: CliRenderer; display: Display };
+type Live = { renderer: CliRenderer; display: Display; raw: Raw };
+type Raw = (bytes: Uint8Array) => boolean;
+export type Launched = { renderer: CliRenderer; raw: Raw };
 
 type Output = { write: (text: string) => unknown; columns: number | undefined; rows: number | undefined; isTTY: boolean | undefined };
 type Input = { isTTY: boolean | undefined };
 
-export type Launch = (config: CliRendererConfig) => Promise<CliRenderer>;
+export type Launch = (config: CliRendererConfig) => Promise<Launched>;
+
+const launchNative: Launch = async config => {
+  const session = new NativeSession(process.stdout);
+  try {
+    const renderer = await createCliRenderer({ ...config, nativeSession: session });
+    return { renderer, raw: bytes => session.open && session.write(bytes) };
+  } catch (error) {
+    if (!session.disposed) await session.close().catch(() => undefined);
+    throw error;
+  }
+};
 
 type Event = "SIGTERM" | "SIGHUP" | "uncaughtException";
 type Listener = (reason: unknown) => void;
@@ -36,7 +49,7 @@ export function hexColor(hex: string): { r: number; g: number; b: number } | nul
 
 const size = (value: number | undefined, fallback: number): number => value !== undefined && value > 0 ? value : fallback;
 
-export function openTuiTerminal(launch: Launch = createCliRenderer, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): Result<PaintingTerminal> {
+export function openTuiTerminal(launch: Launch = launchNative, stdin: Input = process.stdin, stdout: Output = process.stdout, proc: Proc = realProc): Result<PaintingTerminal> {
   if (stdin.isTTY !== true || stdout.isTTY !== true) return fail("orca2 start needs a terminal; run it from an interactive shell");
   return ok(new OpenTuiTerminal(launch, stdout, proc));
 }
@@ -80,6 +93,15 @@ class OpenTuiTerminal implements PaintingTerminal {
   }
 
   onAction(handler: (action: screens.ScreenAction) => void): void { this.actionHandlers.push(handler); }
+
+  signal(sequence: string): boolean {
+    if (this.live === null || this.shut || sequence.length === 0) return false;
+    try { return this.live.raw(new TextEncoder().encode(sequence)); } catch { return false; }
+  }
+
+  answersStatus(): boolean {
+    return this.live?.renderer.capabilities?.program_status === true;
+  }
 
   show(screen: screens.Screen): void {
     this.latest = screen;
@@ -132,13 +154,13 @@ class OpenTuiTerminal implements PaintingTerminal {
   }
 
   private async start(): Promise<void> {
-    const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen", useKittyKeyboard: { disambiguate: true, alternateKeys: true } });
+    const { renderer, raw } = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen", useKittyKeyboard: { disambiguate: true, alternateKeys: true } });
     if (this.shut) { renderer.destroy(); return; }
     const display = new Display(renderer, action => { this.act(action); }, key => { this.emit(key); });
     renderer.keyInput.on("keypress", (event: KeyEvent) => { this.key(event); });
     renderer.keyInput.on("paste", (event: PasteEvent) => { this.emit(pasteFrom(event.bytes)); });
     renderer.on("resize", (width: number, height: number) => { this.resized(width, height); });
-    this.live = { renderer, display };
+    this.live = { renderer, display, raw };
     this.cols = renderer.width;
     this.rows = renderer.height;
     if (this.title.length > 0) renderer.setTerminalTitle(this.title);

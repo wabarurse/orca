@@ -40,12 +40,12 @@ const GUIDANCE = `How to use it as an agent:
 - After changing an installed plugin, run orca2 plugin update <name> [--from <folder>] --yes, never enable (enable also
   turns it on). New agents load the new version at once; a running chat keeps what it loaded until it is restarted:
   orca2 stop --conversation id (or /stop), then the user reopens orca2.
-- Read-only, safe any time: help, skill, version, list, bubbles, bubble merge --dry-run, spans, plugin list/show/check/help, plugin config
-  without --set/--unset, mcp, mcp test, clean --preview, and model, effort, fast, accounts or mux without an argument
-  (they list the choices, the current one marked *).
-- Change state; only when the user asks: model/effort/fast/accounts/mux with an argument, compact, cancel, clear-chat, msg, rename, bubble, bubble merge,
-  trust/untrust, plugin enable/disable/inherit/update/new, plugin config --set/--unset, mcp login/logout. A running TUI
-  shows a changed model, effort or account within a few seconds.
+- Read-only, safe any time: help, skill, version, list, bubbles, bubble merge --dry-run, spans, plugin list/show/check/help,
+  plugin config without --set/--unset, mcp, mcp test, clean --preview, and model, effort, fast, accounts, mux or
+  notifications without an argument (they list the choices, the current one marked *).
+- Change state; only when the user asks: model/effort/fast/accounts/mux/notifications with an argument, compact, cancel,
+  clear-chat, msg, rename, bubble, bubble merge, trust/untrust, plugin enable/disable/inherit/update/new, plugin config
+  --set/--unset, mcp login/logout. A running TUI shows a changed model, effort or account within a few seconds.
 - Never without an explicit request, and never on your own conversation: delete, bubble remove, stop, kill, clean (without --preview),
   pull, login. They end agents, remove data, replace the binary or open a browser sign-in.
 - Do not start the TUI (orca2 or orca2 start): it needs the user's terminal. orca2 -p runs a headless task and may
