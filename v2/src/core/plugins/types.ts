@@ -105,11 +105,13 @@ export type Tone = "normal" | "good" | "warn" | "bad" | "dim";
 export type Row = { id: string; name: string; status: string; info: string; tone: Tone };
 export type Section = { title: string; lines: string[] };
 
+export type PickOptions = { current?: number | null; digits?: boolean };
+
 export type UiHost = PluginContext & {
   note: (text: string) => void;
   confirm: (question: string) => Promise<boolean>;
   input: (prompt: string, initial: string) => Promise<string | null>;
-  pick: (title: string, options: string[]) => Promise<number | null>;
+  pick: (title: string, options: string[], opts?: PickOptions) => Promise<number | null>;
   say: (text: string) => Promise<void>;
   open: (path: string) => Promise<void>;
   attach: (attach: Attach) => Promise<void>;

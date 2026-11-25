@@ -1,6 +1,6 @@
 export type {
   AfterTool, Attach, BackgroundContext, BackgroundHook, BeforeRequest, BeforeTool, BeforeToolResult, Bundle, Command, Count, Fold, GuardInput, GuardRule, Launch, Links, LinkContext, Listener,
-  ShellCommand, OnInput, Plugin, PluginBackground, PluginContext, PluginEvent, PluginHooks, PluginMemory, PluginTool, PluginUi, RequestShape, Retention, Row, Runner, Section, Service, SettledItem,
+  ShellCommand, OnInput, Plugin, PluginBackground, PluginContext, PluginEvent, PluginHooks, PluginMemory, PickOptions, PluginTool, PluginUi, RequestShape, Retention, Row, Runner, Section, Service, SettledItem,
   StorageScope, Tab, TabAction, Tone, ToolCallInfo, ToolLine, UiHost, Watcher,
 } from "./types";
 export type { AgentInfo, Runtime, Tool, ToolContext, ToolResult } from "../tools/registry";
