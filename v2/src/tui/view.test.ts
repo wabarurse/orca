@@ -9,16 +9,16 @@ const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
 
 test("the activity line names the current phase and its elapsed time", () => {
   const model: AgentEvent[] = [{ kind: "span_start", span: open("m", "model", "claude-opus-5-5", 8) }];
-  expect(plain(tail(model, "", 80, NOW, true, null))).toContain("thinking… (8s)");
+  expect(plain(tail(model, "", 80, NOW, true, null))).toContain(" swimming (8s)");
 
   const call = { id: "t1", name: "bash", input: { command: "bun test src/core" } };
   const tool: AgentEvent[] = [{ kind: "tool_start", call }, { kind: "span_start", span: open("t1", "tool", "bash: bun test src/core", 34) }];
   const shown = plain(tail(tool, "", 80, NOW, true, null));
   expect(shown).toContain("bun test src/core) (34s)");
-  expect(shown).not.toContain("thinking");
+  expect(shown).not.toContain("swimming");
 
   const ended: AgentEvent[] = [...model, { kind: "span_end", span: { ...open("m", "model", "claude-opus-5-5", 8), endedAt: at(0), durationMs: 8000, detail: {} } }];
-  expect(plain(tail(ended, "", 80, NOW, true, null))).toContain("thinking…");
+  expect(plain(tail(ended, "", 80, NOW, true, null))).toContain(" swimming");
 });
 
 test("between turns the orchestrator shows what it waits for, but not an idle wait for input", () => {

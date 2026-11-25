@@ -3,7 +3,7 @@ export { cleanPaste, type Key } from "./keys";
 export { keyLog, keyLogPath, KEYLOG_ENV } from "./keylog";
 export { bold, cells, dim, expandTabs, fit, LINK_CLOSE, linkOpen, plainText, RESET, sanitize, visibleLength, wordWrap, wrap } from "./text";
 export { baseText, BG_REPLY_MS, fillRow, noColour, pastel, railMark, selectionMarks, textRow, useTerminalBackground, userFill } from "./style";
-export { shimmer } from "./shimmer";
+export { shimmer, swimming } from "./shimmer";
 export { linkAt, linkSpanAt, OPENABLE, underlineSpan, type LinkSpan } from "./links";
 export * as screens from "./screen-view";
 export { repositoryTitle, type Terminal } from "./term";
