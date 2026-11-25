@@ -1,0 +1,14 @@
+---
+name: orca2
+description: Use the orca2 CLI from bash - conversations, bubbles, plugins (list, install, enable, configure), MCP servers, accounts, spans, cleanup
+---
+Run `orca2 skill` and follow the guide it prints. It comes from the installed orca2, so it matches the commands this
+version has. If it fails, start with `orca2 help` and `orca2 plugin help`.
+
+What to keep in mind beyond that guide:
+
+- Your own conversation is `$ORCA_CONVERSATION`; pass it with `--conversation` rather than relying on the folder.
+- Plugin commands default to this conversation's bubble; `--global` only when the user asks for a global change.
+- `--yes` only for an install or update the user requested; then verify with `orca2 plugin list --json`.
+- Never run `delete`, `stop`, `clean`, `pull` or `login` unless the user asked for exactly that.
+- To write or change a plugin, load the `orca-plugin` skill.

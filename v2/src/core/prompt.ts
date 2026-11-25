@@ -31,5 +31,5 @@ const TERMINOLOGY = "Use the user's terminology for concepts and features. If an
 export const ROLE_PROMPTS: Record<Role, string> = { orchestrator: ORCHESTRATOR, worker: WORKER, reviewer: REVIEWER };
 
 export function rolePrompt(role: Role): string {
-  return `${ROLE_PROMPTS[role]}\n\n${TERMINOLOGY}\nManage plugins with bash: orca2 plugin help. Agent commands default to this chat’s bubble. Use orca2 plugin update <name> --yes after changing an installed plugin, enable <name> --yes only to install or turn one on, config for settings, and list --json to verify.`;
+  return `${ROLE_PROMPTS[role]}\n\n${TERMINOLOGY}\nFor orca2's CLI (plugins, conversations, bubbles), load the orca2 skill.`;
 }

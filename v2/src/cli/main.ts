@@ -9,31 +9,13 @@ import { agentProcess } from "../core/process/agent";
 import { setTrust } from "../core/trust";
 import { runAccounts, runLogin } from "./login";
 import { runMcp } from "./mcp";
-import { PLUGIN_USAGE, runPlugin } from "./plugin";
+import { agentGuide, USAGE } from "./guide";
+import { runPlugin } from "./plugin";
 import { runSpans } from "./spans";
 import { listBubbles, setBubbleDirectory } from "../core/bubbles";
 import { runClean } from "./scripts/clean";
 import { pull } from "./scripts/pull";
 import { reloadRunningDaemons } from "../core/install";
-
-const USAGE = `orca2 [start] [folder]            open the TUI for a folder's conversation
-  orca2 -p "task" [--json] [--model m] [--cwd folder] [--conversation id] [--bundle name] [--yes]
-  orca2 msg "text" [--conversation id]  send input to a conversation's orchestrator
-  orca2 stop [--conversation id]        stop its daemon
-  orca2 list                            conversations
-  orca2 spans [conversation] [--json]   where the wall-clock time went
-  orca2 delete --conversation id        stop its agents and remove it
-  orca2 bubbles                         bubbles and the folder each belongs to
-  orca2 bubble <name|id> --dir <folder>  point a bubble at a folder (chats there are offered it)
-  orca2 rename "name" [--conversation id]  rename a conversation (and its bubble while that still has the old name)
-  orca2 login anthropic|openai [profile] [--import]
-  orca2 accounts
-  orca2 untrust [folder] | orca2 trust [folder]     keep a folder's instructions, skills and plugins off (trust undoes it)
-  orca2 mcp [test|login|logout] [name]
-  ${PLUGIN_USAGE}
-  orca2 clean [--preview] [--yes] [--json]  delete leftover storage after asking; --preview lists without deleting, --yes skips the question
-  orca2 pull                            update ~/.orca2/.runtime/app from origin/main and reinstall ~/.local/bin/orca2
-  orca2 version`;
 
 const out = (text: string): void => { process.stdout.write(text); };
 
@@ -152,6 +134,7 @@ export async function main(argv: string[]): Promise<number> {
     await reloadRunningDaemons();
     return 0;
   }
+  if (command === "skill") { out(await agentGuide(process.env.ORCA_CONVERSATION ?? null)); return 0; }
   if (command === "version" || command === "--version") { out(`orca2 ${BUILD_ID}\n`); return 0; }
   if (command === "help" || command === "--help" || command === "-h") { out(`usage:\n  ${USAGE}\n`); return 0; }
   if (command === undefined || command === "start" || !command.startsWith("-")) {

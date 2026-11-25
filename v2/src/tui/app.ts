@@ -11,6 +11,7 @@ import { removeConversation, renameConversation } from "../core/lifecycle";
 import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
+import { SLASH_COMMANDS } from "../core/slash-commands";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
@@ -455,7 +456,7 @@ export class App {
     const args = rest.join(" ");
     const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · /rename · /close · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop /quit${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C stop · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L or Alt+←/→ switch chats · ${SLASH_COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
     if (name === "rename") { await this.rename(args); return; }
     if (name === "close") { await this.closeTab(); return; }
