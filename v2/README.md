@@ -30,6 +30,15 @@ bun run check && bun run lint && bun test
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
+- **Quitting**: Ctrl+C (or `/kill`) stops every running subagent of the chats open in this orca2 (as `subagent stop`
+  does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then quits. `/exit` (or
+  `/quit`) quits and leaves the subagents running. Either way each chat's orchestrator daemon stays up (idle after
+  `/kill`) and the next orca2 picks it up; `/stop` stops it. `/cancel` stops the running turn only. Ctrl+D quits no more.
+- **Composer history**: Up/Down recall earlier input, messages and slash commands alike, like a shell (Up only on
+  the first row of a multi-line draft, Down only on the last; Down past the newest brings the draft back). Kept per
+  conversation in `conversations/<id>/input-history.json`, the newest 500, consecutive repeats once.
+- **`/clear-chat`** empties the chat view of the open tab, nothing else: the transcript, the agent's context, memory
+  and tasks stay, new messages show as usual, and a restart (or reopening orca2) shows the cleared lines again.
 - **The orchestrator daemon** (`src/core/daemon/`): one process per conversation runs every orchestrator turn,
   the plugins' background watchers and an exit watchdog. TUIs and `orca2 msg` only read files and write the inbox.
 - **The plain runner** (`src/core/runner/`): agents are detached child processes with a log file each and a run

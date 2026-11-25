@@ -152,11 +152,17 @@ export function tail(events: AgentEvent[], lastDurableText: string, cols: number
 
 export type Composer = { prompt: string; state: editor.EditState };
 
+const composerPrompt = (prompt: string, cols: number): string => fit(sanitize(prompt), Math.max(0, Math.max(4, cols - 4) - 4));
+
+export function composerWidth(prompt: string, cols: number): number {
+  return Math.max(1, Math.max(4, cols - 4) - visibleLength(composerPrompt(prompt, cols)));
+}
+
 export function composerRows(c: Composer, counts: string, right: string, cols: number, maxRows: number): { rows: string[]; row: number; col: number } {
   const inner = Math.max(4, cols - 4);
-  const prompt = fit(sanitize(c.prompt), Math.max(0, inner - 4));
+  const prompt = composerPrompt(c.prompt, cols);
   const indent = visibleLength(prompt);
-  const lay = editor.layout(c.state, Math.max(1, inner - indent));
+  const lay = editor.layout(c.state, composerWidth(c.prompt, cols));
   const shown = Math.max(1, Math.min(lay.rows.length, maxRows));
   const top = editor.scrollWindow(lay.rows.length, lay.row, lay.rows.length, shown);
   const body = lay.rows.slice(top, top + shown).map((r, i) => {
