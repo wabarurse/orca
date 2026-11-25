@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { createConversation, readConversation } from "../core/conversations";
-import { requestSettings } from "../core/session";
+import { createConversation, readConversation } from "./conversations";
+import { requestSettings } from "./session";
 import { tempHome } from "../test/home";
 import { effortChoices, fastChoices, recentModels, setEffort, setFast, setModel } from "./settings";
 

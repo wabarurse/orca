@@ -26,10 +26,23 @@ bun run check && bun run lint && bun test
 
 ## What the core is
 
-- **One agent loop** (`src/core/loop/agent.ts`) for the orchestrator, workers, reviewers and plugin bundles: inbox →
+- **One agent loop** (`src/core/loop/agent.ts`) for the orchestrator, workers and plugin bundles: inbox →
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
+- **Quitting**: Ctrl+C (or `/kill`) stops every running subagent of the chats open in this orca2 (as `subagent stop`
+  does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then quits. `/exit` (or
+  `/quit`) quits and leaves the subagents running. Either way each chat's orchestrator daemon stays up (idle after
+  `/kill`) and the next orca2 picks it up; `/stop` stops it. `/cancel` stops the running turn only. Ctrl+D quits no more.
+- **Composer history**: Up/Down recall earlier input, messages and slash commands alike, only while the composer is
+  empty or still shows an unedited recalled entry; over typed text they only move the cursor and never replace it.
+  Down past the newest empties the composer again. Kept per
+  conversation in `conversations/<id>/input-history.json`, the newest 500, consecutive repeats once.
+- **Composer editing**: the composer is a `TextInput` (`src/tui/components/text-input.ts`, see
+  [Editing keys](#editing-keys)) that edits like a native macOS text field: word and line movement, selection,
+  undo/redo, copy/cut/paste and mouse selection.
+- **`/clear-chat`** empties the chat view of the open tab, nothing else: the transcript, the agent's context, memory
+  and tasks stay, new messages show as usual, and a restart (or reopening orca2) shows the cleared lines again.
 - **The orchestrator daemon** (`src/core/daemon/`): one process per conversation runs every orchestrator turn,
   the plugins' background watchers and an exit watchdog. TUIs and `orca2 msg` only read files and write the inbox.
 - **The plain runner** (`src/core/runner/`): agents are detached child processes with a log file each and a run
@@ -40,7 +53,9 @@ bun run check && bun run lint && bun test
 - **Memory**: workers compact in the foreground at 90% of the window; the orchestrator keeps background rolling
   memory from 25% (small model, ~50k verbatim tail, the newest exchange always whole). Everything compaction
   replaces is archived in `archive.sqlite` first, and `memory search` finds it.
-- **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches.
+- **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches. A bubble's
+  folder is its home, not a limit: the bubble picker (new chat, Ctrl+N, the Bubbles tab) lists the bubbles whose
+  folder holds the chat's folder first, then every other bubble labelled with its folder, and any of them can be joined.
 - **Headless**: `orca2 -p "task"` runs the orchestrator in-process until its subagents finish and prints the answer;
   `--json` prints every event (start, input, text, tool_start, tool_end, notice, usage, span_start, span_end, end) as JSON lines.
 - **Spans**: every model request, tool call, wait (for a worker, for input), worker launch, blocking compaction and
@@ -61,6 +76,66 @@ usable results (with their locations) are what the rolling summary is asked to k
 messages stay in the verbatim tail (`rolling.test.ts` checks both); sections a plugin keeps (a task list) are
 rendered verbatim beside the summary. `runtime` became `subagent list`; `history` and `task search_history` became
 `memory search`.
+
+## Editing keys
+
+The composer and every prompt that asks for text (rename, new bubble) use one input component,
+`TextInput` in `src/tui/components/text-input.ts`; its pure model is `editor.ts` (keys → edits, layout) and
+`undo.ts`. Only the focused input takes editing keys: the composer is focused by default, a picker, confirmation,
+text prompt or work page takes focus while it is open and gives it back when it closes, and a click in the composer
+focuses it (closing an open picker or confirmation, like Esc).
+
+| Key | Action | Needs |
+| --- | --- | --- |
+| ←/→, Home/End | character / line start, end | — |
+| ⌥←/⌥→ (also ESC b / ESC f), Ctrl+←/→ | word left / right | ⌥: Option sends Esc/Alt (below) |
+| ⌘←/⌘→, Ctrl+A / Ctrl+E | line start / end (Ctrl+A opens Agents when the composer is empty) | ⌘: kitty keyboard or a mapping |
+| ⌘↑/⌘↓, Ctrl+Home/End | start / end of the message | ⌘: kitty keyboard |
+| ↑/↓ | previous / next row, keeping the column; on the first / last row, to the start / end; input history only from an empty composer | — |
+| Shift + any move above (⇧⌥ word, ⇧⌘ line/message, ⇧↑/↓ row) | extend the selection | as the move |
+| ⌘A, also ⌘⇧A, Ctrl+⇧A or ⌥A | select all text in the input (not the screen) | ⌘A: kitty keyboard, and the terminal must not take ⌘A; Ctrl+⇧A: kitty keyboard; ⌥A: Option as Alt |
+| typing, paste, Backspace, Delete with a selection | replace / remove the selection; an arrow collapses it | — |
+| Backspace / Delete (Fn+Delete) | delete a character back / forward; Ctrl+D forward too | — |
+| ⌥Backspace, Ctrl+W, Ctrl+Backspace / ⌥Delete (also ESC d) | delete a word back / forward | ⌥: Option as Esc/Alt |
+| ⌘Backspace, Ctrl+U / ⌘Delete, Ctrl+K | delete to line start / end | ⌘: kitty keyboard or a mapping |
+| ⌘Z / ⌘⇧Z, Ctrl+Z / Ctrl+⇧Z or Ctrl+Y | undo / redo (typing undoes a word at a time) | ⌘ and Ctrl+⇧: kitty keyboard |
+| ⌘C / ⌘X / ⌘V | copy / cut the selection, paste text (pbcopy/pbpaste, wl-copy/xclip; OSC 52 when no clipboard tool works) | kitty keyboard, and the terminal must not take the key |
+| Enter / Shift+Enter, Alt+Enter, Ctrl+J | send / new line | Shift+Enter: kitty keyboard |
+| click, drag, double-click, triple-click | place the cursor, select, select a word, select the line | mouse reporting |
+
+Ctrl+C still stops every agent and quits; Ctrl+H/Ctrl+L switch chats (⌥←/→ moves by word now). Your terminal's own
+paste (⌘V in most terminals) arrives as a bracketed paste and is inserted as text, cleaned of control characters.
+
+What the terminal must deliver: orca2 turns on the kitty keyboard protocol (disambiguate + alternate keys) through
+OpenTUI, so a terminal that speaks it sends ⌘ as the *super* modifier and Shift+Enter, Ctrl+⇧Z apart from their plain
+keys. A terminal without it never sends ⌘: use the Ctrl/Home/End equivalents in the table. Terminal shortcuts win
+over the app: a ⌘ key the terminal binds itself (⌘A select all, ⌘C copy, ⌘V paste) never reaches orca2.
+
+- **Ghostty**: speaks the kitty protocol. Its defaults already map ⌘←/⌘→ to Ctrl+A/Ctrl+E, ⌘Backspace to Ctrl+U
+  and ⌥←/⌥→ to ESC b/ESC f, which orca2 reads as above. For ⌥Backspace/⌥Delete set `macos-option-as-alt = true`.
+  ⌘A is Ghostty's own select-all: add `keybind = cmd+a=unbind` to send it to orca2 (or `keybind = cmd+a=csi:97;9u`).
+  ⌘Z, ⌘⇧Z, ⌘↑/⌘↓ need no setting unless you bound them.
+- **iTerm2**: Settings → Profiles → Keys → Key Mappings → Presets → *Natural Text Editing* (⌘←/→, ⌥←/→,
+  ⌥Backspace, ⌘Backspace), and Left Option key → *Esc+*. For the other ⌘ keys turn on *Report keys using CSI u* /
+  let apps change how keys are reported (kitty protocol), and map ⌘A to *Send Escape Sequence* `[97;9u` since ⌘A is
+  iTerm2's select all.
+- **Terminal.app**: no kitty protocol and no ⌘ keys reach programs. ⌥←/⌥→ send ESC b/ESC f by default; turn on
+  Settings → Profiles → Keyboard → *Use Option as Meta key* for ⌥Backspace/⌥Delete. Use Home/End, Ctrl+A/Ctrl+E,
+  Ctrl+U/Ctrl+K, Ctrl+Z/Ctrl+Y and Shift+arrows instead of the ⌘ keys; select all is not available.
+- **Rex**: speaks the kitty keyboard protocol (orca2 gets flags 5), and with it sends every ⌘ key orca2 uses:
+  ⌘A arrives as `CSI 97;9u`, ⌘Z `CSI 122;9u`, ⌘⇧Z `CSI 122;10u`, ⌘← `CSI 1;9D`, ⌘Backspace `CSI 127;9u`,
+  ⌥← `CSI 1;3D`, Ctrl+⇧A `CSI 97;6u`. A ⌘A pressed on the keyboard is taken by the Rex macOS app
+  before any key binding (⌘⇧A, which no menu item uses, does arrive). To hand ⌘A to the terminal, remove Rex's
+  own ⌘A: Settings → Shortcuts, search `cmd+a`, remove it from *Select All in Pane*; if a menu still owns it,
+  move the menu's key equivalent with `defaults write com.superlogical.rex NSUserKeyEquivalents -dict-add
+  "Select All in Pane" "@~^a"` (and the same for `"Select All"`) and restart Rex. `rex.bind("cmd+a",
+  "pane.send_key", { key = "cmd+a" })` in `~/.config/rex/init.lua` alone is not enough. Meanwhile ⌘⇧A or Ctrl+⇧A
+  select all in the composer.
+
+To see what a key really delivers, start orca2 with a key log (it records every key, so delete it after):
+`ORCA2_KEYLOG=/tmp/orca2-keys.log bun run dev`, press the key, then `cat /tmp/orca2-keys.log`. Each key gives a
+`key raw=…` line (the bytes and modifiers OpenTUI decoded), an `app …` line and a `composer took|left …` line;
+the first line shows the terminal and kitty keyboard flags. No line for a key means the terminal kept it.
 
 ## Plugins
 
@@ -91,7 +166,7 @@ To enable several installed plugins together, run `orca2 plugin enable images sa
 - **Hooks**: `beforeTool` (run with changed input, block, or ask the user), `afterTool`, `beforeRequest`, `onInput`,
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
-  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]`.
+  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `/stop` (or `orca2 stop`) and reopening orca2.
 
 ## Layout
 

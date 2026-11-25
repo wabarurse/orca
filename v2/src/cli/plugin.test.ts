@@ -8,6 +8,7 @@ import { registerBuiltins, availablePlugins, loadForCheck } from "../core/plugin
 import { tempHome } from "../test/home";
 import { runPlugin } from "./plugin";
 import { pluginTemplate } from "./template";
+const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you /stop it (or orca2 stop --conversation <id>) and reopen orca2.\n";
 const home = tempHome("plugin-cli");
 async function cli(...args: string[]) {
   let output = "";
@@ -104,7 +105,7 @@ test("enable groups new approvals and prints one confirmation for the requested 
   expect(await run(true)).toBe(0);
   const question = "Allow brief-two and brief-three to run with your permissions?";
   expect(prompts).toEqual([question, question]);
-  expect(output).toBe("Enabled brief-one, brief-two, and brief-three globally.\n");
+  expect(output).toBe("Enabled brief-one, brief-two, and brief-three globally.\n" + RESTART);
   const alreadyApproved = await cli(...args);
   expect(alreadyApproved).toEqual({ code: 0, output });
 });
@@ -121,4 +122,64 @@ test("a batch validates its names and selected versions before changing enableme
   const config = await loadConfig();
   expect(config.plugins).not.toContain(name);
   expect(config.approved.some(pin => pin.startsWith(name+"@"))).toBe(false);
+});
+
+test("update re-approves a changed plugin and leaves every scope's on/off alone", async () => {
+  registerBuiltins([]);
+  const name = "brief-update";
+  const dir = await makePlugin(name);
+  expect((await cli("enable", name, "--global", "--yes")).code).toBe(0);
+  const conversation = await createConversation(home.path(), "upd");
+  const bubble = await ensureBubble(conversation.id);
+  if (!bubble.ok) throw new Error(bubble.error);
+  expect((await cli("disable", name, "--bubble", bubble.data.id)).code).toBe(0);
+  const before = await loadConfig();
+  expect((await cli("update", name)).output).toBe(`${name} is up to date\n`);
+  await writeFile(join(dir, "note.txt"), "edited in place");
+  expect((await availablePlugins(null, false)).problems.find(p => p.name === name)?.problem).toBe(`not approved (changed): run orca2 plugin update ${name}`);
+  expect(await cli("update", name)).toEqual({ code: 3, output: `Approval needed for ${name}. Use --yes to approve.\n` });
+  expect((await cli("update", name, "--yes")).output).toBe(`Updated ${name}.\n${RESTART}`);
+  const after = await loadConfig();
+  expect(after.plugins).toEqual(before.plugins);
+  expect(after.approved.filter(pin => pin.startsWith(name + "@"))).toHaveLength(1);
+  expect(after.approved).not.toEqual(before.approved);
+  expect((await availablePlugins(null, false)).plugins.has(name)).toBe(true);
+  const listed = (await cli("list", "--bubble", bubble.data.id, "--json")).output;
+  expect(listed).toContain(`"name":"${name}","enabled":false,"override":"off"`);
+  expect((await cli("list", "--global", "--json")).output).toContain(`"name":"${name}","enabled":true,"override":null`);
+  expect((await cli("update", name, "--yes")).output).toBe(`${name} is up to date\n`);
+});
+
+test("update --from copies the folder and refuses new, built-in and misused names", async () => {
+  registerBuiltins([]);
+  const name = "brief-copied";
+  await makePlugin(name);
+  expect((await cli("enable", name, "--global", "--yes")).code).toBe(0);
+  const work = join(home.path(), "work", name);
+  await mkdir(work, { recursive: true });
+  await writeFile(join(work, "index.ts"), pluginTemplate(name)["index.ts"] ?? "");
+  await writeFile(join(work, "extra.txt"), "new file");
+  expect((await cli("update", name, "--from", work, "--yes")).output).toBe(`Updated ${name}.\n${RESTART}`);
+  expect(await Bun.file(join(paths.plugins, name, "extra.txt")).text()).toBe("new file");
+  expect((await cli("update", name, "--from", work, "--yes")).output).toBe(`${name} is up to date\n`);
+  expect((await loadConfig()).plugins).toContain(name);
+
+  const fresh = await cli("update", "brief-never", "--yes");
+  expect(fresh.code).toBe(1);
+  expect(fresh.output).toContain("orca2 plugin enable brief-never");
+  const fixture = await loadForCheck(join(paths.plugins, name), name);
+  if (!fixture.ok) throw new Error(fixture.error);
+  registerBuiltins([{ name: "core-one", dir: "builtins/core-one", index: async () => ({ default: fixture.data.plugin }), ui: null, background: null }]);
+  try {
+    expect(await cli("update", "core-one")).toEqual({ code: 1, output: "core-one is supplied by Orca and updates with orca2\n" });
+  } finally { registerBuiltins([]); }
+  expect((await cli("update", name, "brief-two", "--from", work)).code).toBe(2);
+  expect((await cli("update", name, "--global")).code).toBe(2);
+  expect((await cli("update", name, "--bubble")).code).toBe(2);
+});
+
+test("a never-approved plugin still points to enable", async () => {
+  registerBuiltins([]);
+  await makePlugin("brief-unseen");
+  expect((await availablePlugins(null, false)).problems.find(p => p.name === "brief-unseen")?.problem).toBe("not approved (new): run orca2 plugin enable brief-unseen");
 });

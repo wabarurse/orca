@@ -7,6 +7,7 @@ import { CORE_TOOL_NAMES } from "../tools/registry";
 import { z } from "zod";
 import type { Tool } from "../tools/registry";
 import type { GuardInput } from "../tools/bash/guard";
+import { RoleRecord } from "../roles";
 import { registerPluginModules } from "./modules";
 import type { AfterTool, BeforeRequest, BeforeTool, Listener, OnInput, Plugin, PluginBackground, PluginEvent, PluginUi, Retention, Service } from "./types";
 
@@ -53,7 +54,7 @@ export async function pluginHash(dir: string): Promise<string> {
 
 const isFn = (value: unknown): boolean => typeof value === "function";
 const fn = <T>() => z.custom<T>(isFn);
-const RoleName = z.enum(["orchestrator", "worker", "reviewer"]);
+const RoleName = RoleRecord;
 const ToolShape = z.object({ spec: z.looseObject({ name: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/) }), run: z.custom(isFn), parallel: z.custom(isFn) });
 const PluginRecord = z.object({
   name: z.string(), description: z.string(),
@@ -108,7 +109,7 @@ function pluginProblem(p: Record<string, unknown>, folder: string): string | nul
   }
   for (const bundle of listOf(p.bundles) ?? []) {
     const name = field(bundle, "name"), role = field(bundle, "role");
-    if (typeof name !== "string" || !NAME.test(name) || typeof role !== "string" || !["orchestrator", "worker", "reviewer"].includes(role)) return "each bundle needs a name and a role";
+    if (typeof name !== "string" || !NAME.test(name) || typeof role !== "string" || !RoleRecord.safeParse(role).success) return "each bundle needs a name and a role";
   }
   return null;
 }
@@ -183,7 +184,8 @@ export async function availablePlugins(directory: string | null, trusted: boolea
       if (source === "user" && plugins.get(name)?.source === "builtin") continue;
       if (plugins.has(name)) { problems.push({ name, dir, problem: `a plugin named ${name} is already loaded` }); continue; }
       if (source === "user" && !config.approved.includes(`${name}@${await pluginHash(dir)}`)) {
-        problems.push({ name, dir, problem: `not approved (new or changed): run orca2 plugin enable ${name}` });
+        const changed = config.approved.some(pin => pin.startsWith(`${name}@`));
+        problems.push({ name, dir, problem: changed ? `not approved (changed): run orca2 plugin update ${name}` : `not approved (new): run orca2 plugin enable ${name}` });
         continue;
       }
       const loaded = await loadFolder(dir, name, source);

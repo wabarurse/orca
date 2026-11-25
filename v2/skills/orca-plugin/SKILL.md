@@ -16,7 +16,7 @@ permissions, and approval is recorded for an exact version. When the user asks y
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
-4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. An agent defaults to its own bubble, including from a worker worktree. Use `--global` only for a requested global change. Verify with `orca2 plugin list --json`. Use `show` to inspect a plugin, `disable` to turn it off, and `inherit` to restore the bubble’s default. Group installed plugins in one enable command to approve them together.
+4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. After changing an installed plugin run `orca2 plugin update <name> [--from <folder>] --yes`, never `enable` (it also turns the plugin on). New agents load the change at once; a running chat keeps what it loaded until it is restarted (`/stop`, then reopen orca2). Verify with `orca2 plugin list --json`. The `orca2 skill` guide has the exact commands and scopes.
 
 Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
 are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
@@ -218,14 +218,16 @@ export default ui;
 ```
 
 Tabs appear on the work page after Agents (Ctrl+A, then Tab); `chord: "q"` also opens it with Ctrl+Q. The core
-uses Ctrl+ a, c, d, j, k, n, u, v, w; the questions and tasks plugins take q and t. On the page the core uses j, k, h,
+uses Ctrl+ a, b, c, d, e, h, j, k, l, n, p, u, v, w, y, z; the questions and tasks plugins take q and t. On the page the core uses j, k, h,
 l, q, r, a, A, u (archive and restore), the digits, Tab, Esc, PgUp/PgDn, and s on the Agents tab; any other single
 character is yours for actions, and `key: "enter"` runs on Enter.
 `tone` is normal, good, warn, bad or dim. A tab belongs to one plugin: rows cannot be added to another plugin's tab.
 
 The host is the tab's `PluginContext` (so `host.conversation`, `host.data(scope)` work) plus `note`, `confirm`,
 `input`, `pick`, `say` (text to the orchestrator as the user, queued as steer input; there is no receipt) and
-`open(path)` (the desktop viewer). Commands are global: if two enabled plugins define the same name, the first
+`open(path)` (the desktop viewer). `pick(title, options, { current, digits })` lists every option with the highlighted
+one marked `❯` in the selection colour (j/k/arrows move it, Enter resolves with its index, Esc with null); `current` is the index
+it starts on (marked `●`, e.g. a suggested answer) and `digits: true` lets 1–9 pick at once; both are optional. Commands are global: if two enabled plugins define the same name, the first
 wins. Counts show in the composer only when above zero; keep them cheap (they run every 2s). A fold turns
 finished calls of a tool into "+ <title(n)>" with one line per item (`title(n)` includes the number:
 `n => \`${n} notes\``); `opens` is the tab an item opens.

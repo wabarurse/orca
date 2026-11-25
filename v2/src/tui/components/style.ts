@@ -99,3 +99,10 @@ export function fillRow(row: string, cols: number, fill: string): string {
 export function textRow(row: string, colour: string): string {
   return colour + row.replace(SGR, (m, p: string) => (resetsFill(p) ? m + colour : m));
 }
+
+export function selectionMarks(env: Env = process.env, background: Rgb | null = terminal): { on: string; off: string } {
+  if (noColour(env)) return { on: "\x1b[7m", off: "\x1b[27m" };
+  const light = background !== null && isLight(background);
+  if (truecolor(env)) return { on: light ? "\x1b[48;2;179;215;255m" : "\x1b[48;2;38;79;120m", off: "\x1b[49m" };
+  return { on: light ? "\x1b[48;5;153m" : "\x1b[48;5;24m", off: "\x1b[49m" };
+}

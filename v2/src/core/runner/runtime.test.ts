@@ -7,8 +7,8 @@ import { createConversation } from "../conversations";
 import { registerBuiltins } from "../plugins/loader";
 import { defineBackground, definePlugin, noHooks, type Runner } from "../plugins/types";
 import { launchCommand } from "./launch";
-import { chooseRunner, runnerNames, runtimeFor, selectedRunner } from "./runtime";
-import { readRun, updateRun } from "./runs";
+import { chooseRunner, runnerNames, runtimeFor, selectedRunner, stopAgents } from "./runtime";
+import { newRun, readRun, updateRun, writeRun } from "./runs";
 
 const home = tempHome("runtime");
 
@@ -74,4 +74,19 @@ test("the orchestrator can start an agent in a named runner without /mux, is ref
   expect(await runtime.show(info.agent)).toBe(`${info.agent} is open beside orca2`);
   expect(opened).toEqual([info.agent]);
   await saveConfig({ plugins: [] });
+});
+
+test("stopAgents stops every live subagent of a chat the way subagent stop does, and leaves the orchestrator and finished runs alone", async () => {
+  const c = await createConversation(home.path(), "kill");
+  const child = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore" });
+  const run = (agent: string, role: "orchestrator" | "worker", state: "running" | "exited", pid: number) =>
+    ({ ...newRun({ conversation: c.id, agent, role, bundle: "worker", branch: agent, runner: "plain" }), state, pid, handle: String(pid) });
+  await writeRun(run("worker-live", "worker", "running", child.pid));
+  await writeRun(run("worker-done", "worker", "exited", child.pid));
+  await writeRun(run("orchestrator", "orchestrator", "running", child.pid));
+  expect(await stopAgents(c.id)).toEqual(["worker-live"]);
+  expect((await readRun(c.id, "worker-live"))?.state).toBe("stopped");
+  expect((await readRun(c.id, "worker-done"))?.state).toBe("exited");
+  expect((await readRun(c.id, "orchestrator"))?.state).toBe("running");
+  await child.exited;
 });

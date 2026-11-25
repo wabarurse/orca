@@ -40,21 +40,22 @@ export function pluginContext(conversation: string, plugin: string, cwd: string,
 }
 
 export type HostAnswers = { pick: number | null; input: string | null; confirm: boolean };
-export type RecordingHost = { host: UiHost; said: string[]; notes: string[]; opened: string[]; attached: Attach[] };
+export type Picked = { title: string; options: string[]; current: number | null; digits: boolean };
+export type RecordingHost = { host: UiHost; said: string[]; notes: string[]; opened: string[]; attached: Attach[]; picked: Picked[] };
 
 export function recordingHost(ctx: PluginContext, answers: HostAnswers): RecordingHost {
-  const said: string[] = [], notes: string[] = [], opened: string[] = [], attached: Attach[] = [];
+  const said: string[] = [], notes: string[] = [], opened: string[] = [], attached: Attach[] = [], picked: Picked[] = [];
   const host: UiHost = {
     ...ctx,
     note: text => { notes.push(text); },
     confirm: async () => answers.confirm,
     input: async () => answers.input,
-    pick: async () => answers.pick,
+    pick: async (title, options, opts) => { picked.push({ title, options, current: opts?.current ?? null, digits: opts?.digits === true }); return answers.pick; },
     say: async text => { said.push(text); },
     open: async path => { opened.push(path); },
     attach: async plan => { attached.push(plan); },
   };
-  return { host, said, notes, opened, attached };
+  return { host, said, notes, opened, attached, picked };
 }
 
 export function item<T>(list: readonly T[], index: number): T {

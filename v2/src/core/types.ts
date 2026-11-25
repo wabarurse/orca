@@ -1,6 +1,6 @@
 import type { MessageParam } from "@anthropic-ai/sdk/resources/messages";
 
-export type Role = "orchestrator" | "worker" | "reviewer";
+export type Role = "orchestrator" | "worker";
 
 export type Delivery = "steer" | "follow";
 

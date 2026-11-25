@@ -15,7 +15,6 @@ import { fail, ok, type Result } from "../../config";
 export const BUILTIN_BUNDLES: Bundle[] = [
   { name: "orchestrator", role: "orchestrator", prompt: rolePrompt("orchestrator"), plugins: ["*"] },
   { name: "worker", role: "worker", prompt: rolePrompt("worker"), plugins: ["*"] },
-  { name: "reviewer", role: "reviewer", prompt: rolePrompt("reviewer"), plugins: ["*"] },
 ];
 
 export type Assembled = {
@@ -41,7 +40,8 @@ export async function assemble(input: AssembleInput): Promise<Result<Assembled>>
     return loaded === undefined ? [] : [loaded];
   });
   const bundles = [...BUILTIN_BUNDLES, ...enabled.flatMap(p => p.plugin.bundles)];
-  const bundle = bundles.find(b => b.name === input.bundle);
+  const name = input.bundle === "reviewer" && !bundles.some(b => b.name === "reviewer") ? "worker" : input.bundle;
+  const bundle = bundles.find(b => b.name === name);
   if (bundle === undefined) return fail(`no bundle ${input.bundle}; known: ${bundles.map(b => b.name).join(", ")}`);
   const used = bundle.plugins.includes("*") ? enabled : enabled.filter(p => bundle.plugins.includes(p.plugin.name));
   const role: Role = bundle.role;

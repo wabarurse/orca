@@ -5,6 +5,7 @@ export type Key = {
   ctrl?: boolean;
   alt?: boolean;
   shift?: boolean;
+  cmd?: boolean;
   text?: string;
 };
 
@@ -20,6 +21,7 @@ function withMods(key: Key, mod: number): Key {
   if ((bits & 1) !== 0) key.shift = true;
   if ((bits & 2) !== 0) key.alt = true;
   if ((bits & 4) !== 0) key.ctrl = true;
+  if ((bits & 8) !== 0) key.cmd = true;
   return key;
 }
 

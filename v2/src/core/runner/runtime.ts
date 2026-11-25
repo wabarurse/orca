@@ -80,6 +80,13 @@ export async function stopAgent(conversation: string, agent: string): Promise<st
   return `stopped ${agent}`;
 }
 
+export async function stopAgents(conversation: string): Promise<string[]> {
+  const running = (await listRuns(conversation)).filter(run => run.agent !== "orchestrator" && live(run));
+  const stopped: string[] = [];
+  for (const run of running) if ((await stopAgent(conversation, run.agent)).startsWith("stopped ")) stopped.push(run.agent);
+  return stopped;
+}
+
 export async function showAgent(conversation: string, agent: string): Promise<string> {
   const run = await readRun(conversation, agent);
   if (run === null) return `no agent ${agent}`;

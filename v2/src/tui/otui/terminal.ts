@@ -1,6 +1,6 @@
 import { errorMessage, fail, ok, type Result } from "../../config";
 import { createCliRenderer, type CliRenderer, type CliRendererConfig, type KeyEvent, type PasteEvent } from "@opentui/core";
-import { BG_REPLY_MS, imageProtocol, plainText, useTerminalBackground, type Key, type Terminal, type screens } from "../components";
+import { BG_REPLY_MS, imageProtocol, keyLog, plainText, useTerminalBackground, type Key, type Terminal, type screens } from "../components";
 import { Display, type ScrollBy } from "./display";
 import { keyFrom, pasteFrom } from "./keys";
 
@@ -94,6 +94,10 @@ class OpenTuiTerminal implements PaintingTerminal {
     return this.live === null ? "" : this.live.display.selection();
   }
 
+  copyOsc52(text: string): boolean {
+    return this.live !== null && this.live.renderer.copyToClipboardOSC52(text);
+  }
+
   async handOver(argv: string[]): Promise<number> {
     const renderer = this.live?.renderer ?? null;
     if (renderer !== null) await renderer.suspend();
@@ -128,7 +132,7 @@ class OpenTuiTerminal implements PaintingTerminal {
   }
 
   private async start(): Promise<void> {
-    const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen" });
+    const renderer = await this.launch({ exitOnCtrlC: false, exitSignals: [], useMouse: true, autoFocus: false, screenMode: "alternate-screen", useKittyKeyboard: { disambiguate: true, alternateKeys: true } });
     if (this.shut) { renderer.destroy(); return; }
     const display = new Display(renderer, action => { this.act(action); }, key => { this.emit(key); });
     renderer.keyInput.on("keypress", (event: KeyEvent) => { this.key(event); });
@@ -147,6 +151,7 @@ class OpenTuiTerminal implements PaintingTerminal {
     const hex = palette === null ? null : palette.defaultBackground;
     const background = typeof hex === "string" ? hexColor(hex) : null;
     if (background !== null) useTerminalBackground(background);
+    keyLog(`start kittyKeyboard=${String(renderer.useKittyKeyboard)} capabilities=${JSON.stringify(renderer.capabilities)}`);
     this.images(renderer);
   }
 
@@ -170,7 +175,9 @@ class OpenTuiTerminal implements PaintingTerminal {
   }
 
   private key(event: KeyEvent): void {
-    this.emit(keyFrom(event));
+    const key = keyFrom(event);
+    keyLog(`key raw=${JSON.stringify(event.raw)} name=${event.name} ctrl=${String(event.ctrl)} alt=${String(event.meta || event.option)} shift=${String(event.shift)} super=${String(event.super === true)} type=${event.eventType} source=${event.source} -> ${JSON.stringify(key)}`);
+    this.emit(key);
   }
 
   private act(action: screens.ScreenAction): void {

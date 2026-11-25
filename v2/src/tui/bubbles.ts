@@ -1,22 +1,29 @@
+import { homedir } from "node:os";
 import { basename } from "node:path";
-import { bubblesFor, memoryNodes, OVERVIEW, type Bubble } from "../core/bubbles";
+import { bubbleServes, listBubbles, memoryNodes, OVERVIEW, type Bubble } from "../core/bubbles";
 import { listConversations, type Conversation } from "../core/conversations";
 import type { Row, Section } from "../core/plugins/types";
 
-export type BubbleEntry = { bubble: Bubble; nodes: number; overview: string | null; conversations: Conversation[] };
+export type BubbleEntry = { bubble: Bubble; nodes: number; overview: string | null; conversations: Conversation[]; here: boolean };
 export type BubbleTarget = { kind: "bubble"; id: string } | { kind: "conversation"; id: string } | { kind: "none" };
 
 const NO_BUBBLE = "no bubble";
 
+export function bubbleFolder(bubble: Bubble): string {
+  if (bubble.directory === null) return "no folder";
+  const home = homedir();
+  return bubble.directory === home || bubble.directory.startsWith(`${home}/`) ? `~${bubble.directory.slice(home.length)}` : bubble.directory;
+}
+
 export async function bubbleEntries(directory: string): Promise<{ entries: BubbleEntry[]; loose: Conversation[] }> {
-  const [bubbles, conversations] = await Promise.all([bubblesFor(directory), listConversations()]);
+  const [bubbles, conversations] = await Promise.all([listBubbles(), listConversations()]);
   const entries = await Promise.all(bubbles.map(async (bubble): Promise<BubbleEntry> => {
     const nodes = await memoryNodes(bubble.id);
     return { bubble, nodes: nodes.filter(n => n.id !== OVERVIEW).length, overview: nodes.find(n => n.id === OVERVIEW)?.summary ?? null,
-      conversations: conversations.filter(c => c.bubble === bubble.id) };
+      conversations: conversations.filter(c => c.bubble === bubble.id), here: bubbleServes(bubble, directory) };
   }));
   const known = new Set(bubbles.map(b => b.id));
-  entries.sort((a, b) => b.nodes !== a.nodes ? b.nodes - a.nodes : a.bubble.name.localeCompare(b.bubble.name));
+  entries.sort((a, b) => a.here !== b.here ? (a.here ? -1 : 1) : b.nodes !== a.nodes ? b.nodes - a.nodes : a.bubble.name.localeCompare(b.bubble.name));
   return { entries, loose: conversations.filter(c => c.directory === directory && (c.bubble === null || !known.has(c.bubble))) };
 }
 
@@ -28,7 +35,7 @@ const children = (list: Conversation[], current: string): Row[] => list.map((c, 
 export function bubbleRows(found: { entries: BubbleEntry[]; loose: Conversation[] }, current: string): Row[] {
   const rows = found.entries.flatMap(e => [
     { id: `bubble:${e.bubble.id}`, name: e.bubble.name, status: `${e.nodes} node${e.nodes === 1 ? "" : "s"}`,
-      info: `${e.conversations.length} chat${e.conversations.length === 1 ? "" : "s"}`, tone: e.conversations.some(c => c.id === current) ? "good" : "normal" } satisfies Row,
+      info: `${e.conversations.length} chat${e.conversations.length === 1 ? "" : "s"}${e.here ? "" : ` · ${bubbleFolder(e.bubble)}`}`, tone: e.conversations.some(c => c.id === current) ? "good" : "normal" } satisfies Row,
     ...children(e.conversations, current)]);
   if (found.loose.length === 0) return rows;
   return [...rows, { id: "none", name: NO_BUBBLE, status: "", info: `${found.loose.length} chat${found.loose.length === 1 ? "" : "s"}`, tone: "dim" }, ...children(found.loose, current)];
@@ -62,7 +69,7 @@ export type BubbleChoice = { kind: "new" } | { kind: "join"; id: string } | { ki
 export async function bubbleChoices(directory: string): Promise<{ options: string[]; choices: BubbleChoice[] }> {
   const { entries } = await bubbleEntries(directory);
   return {
-    options: ["New bubble", ...entries.map(e => `${e.bubble.name} · ${e.nodes} nodes · ${e.conversations.length} chats`), "No bubble (no shared memory)"],
+    options: ["New bubble", ...entries.map(e => `${e.bubble.name} · ${e.nodes} nodes · ${e.conversations.length} chats${e.here ? "" : ` · ${bubbleFolder(e.bubble)}`}`), "No bubble (no shared memory)"],
     choices: [{ kind: "new" }, ...entries.map((e): BubbleChoice => ({ kind: "join", id: e.bubble.id })), { kind: "none" }],
   };
 }
