@@ -166,12 +166,21 @@ async function switches(names: string[], scope: Scope, state: "on" | "off" | nul
 
 type LocalPlugin = { name: string; source: string; dest: string; copy: boolean; hash: string };
 
+async function pluginAt(name: string, folder: string): Promise<Result<LocalPlugin>> {
+  const dest = join(paths.plugins, name);
+  const source = await realpath(folder), installed = await realpath(dest).catch(() => dest);
+  const copy = source !== installed;
+  if (copy && (source.startsWith(installed + sep) || installed.startsWith(source + sep))) {
+    return fail("source and installed plugin folders overlap");
+  }
+  return ok({ name, source, dest, copy, hash: await pluginHash(source) });
+}
+
 async function localPlugin(name: string, from: string | null, scope: Scope): Promise<Result<LocalPlugin | null>> {
   if (builtinPlugins().some(p => p.name === name)) {
     return from === null ? ok(null) : fail(`${name} is supplied by Orca; choose another name for a custom plugin`);
   }
-  const dest = join(paths.plugins, name);
-  const folder = from === null ? dest : resolve(from);
+  const folder = from === null ? join(paths.plugins, name) : resolve(from);
   if (!existsSync(join(folder, "index.ts"))) {
     const repo = join(scope.directory, ".orca2", "plugins", name, "index.ts");
     if (from === null && existsSync(repo) && await trustState(scope.directory) === "trusted") {
@@ -179,12 +188,7 @@ async function localPlugin(name: string, from: string | null, scope: Scope): Pro
     }
     return fail(`no plugin ${name} at ${folder}`);
   }
-  const source = await realpath(folder), installed = await realpath(dest).catch(() => dest);
-  const copy = source !== installed;
-  if (copy && (source.startsWith(installed + sep) || installed.startsWith(source + sep))) {
-    return fail("source and installed plugin folders overlap");
-  }
-  return ok({ name, source, dest, copy, hash: await pluginHash(source) });
+  return pluginAt(name, folder);
 }
 
 async function validateAndInstall(plugin: LocalPlugin): Promise<Result<null>> {
@@ -212,36 +216,75 @@ async function validateAndInstall(plugin: LocalPlugin): Promise<Result<null>> {
   } finally { if (staging !== null) await rm(staging, { recursive: true, force: true }); }
 }
 
-async function enable(names: string[], flags: string[], scope: Scope, out: Out, ask: Ask, interactive: boolean): Promise<number> {
+type Confirm = { from: string | null; yes: boolean; out: Out; ask: Ask; interactive: boolean };
+
+async function installAndApprove(locals: LocalPlugin[], confirm: Confirm): Promise<number | null> {
+  const config = await loadConfig();
+  const pending = locals.filter(p => !config.approved.includes(`${p.name}@${p.hash}`));
+  if (pending.length > 0 && !confirm.yes) {
+    const list = namesInText.format(pending.map(p => p.name));
+    if (!confirm.interactive) { confirm.out(`Approval needed for ${list}. Use --yes to approve.\n`); return 3; }
+    const origin = confirm.from === null ? "" : ` from ${confirm.from}`;
+    if (!await confirm.ask(`Allow ${list}${origin} to run with your permissions?`)) {
+      confirm.out("Cancelled.\n"); return 1;
+    }
+  }
+  for (const plugin of locals) {
+    const checked = await validateAndInstall(plugin);
+    if (!checked.ok) { confirm.out(checked.error + "\n"); return 1; }
+  }
+  if (pending.length > 0) {
+    const approved = config.approved.filter(pin => !pending.some(p => pin.startsWith(p.name + "@")));
+    await saveConfig({ approved: [...approved, ...pending.map(p => `${p.name}@${p.hash}`)] });
+  }
+  return null;
+}
+
+function fromFolder(names: string[], flags: string[], out: Out): string | null | false {
   const from = option(flags, "--from");
   if (flags.includes("--from") && (names.length !== 1 || from === null || from.startsWith("--"))) {
-    out("--from requires one plugin name and one folder\n"); return 2;
+    out("--from requires one plugin name and one folder\n"); return false;
   }
+  return from;
+}
+
+async function enable(names: string[], flags: string[], scope: Scope, out: Out, ask: Ask, interactive: boolean): Promise<number> {
+  const from = fromFolder(names, flags, out);
+  if (from === false) return 2;
   const locals: LocalPlugin[] = [];
   for (const name of names) {
     const plugin = await localPlugin(name, from, scope);
     if (!plugin.ok) { out(plugin.error + "\n"); return 1; }
     if (plugin.data !== null) locals.push(plugin.data);
   }
+  const installed = await installAndApprove(locals, { from, yes: flags.includes("--yes"), out, ask, interactive });
+  return installed ?? switches(names, scope, "on", out);
+}
+
+async function update(names: string[], flags: string[], out: Out, ask: Ask, interactive: boolean): Promise<number> {
+  const from = fromFolder(names, flags, out);
+  if (from === false) return 2;
+  const locals: LocalPlugin[] = [];
+  const current: string[] = [];
   const config = await loadConfig();
-  const pending = locals.filter(p => !config.approved.includes(`${p.name}@${p.hash}`));
-  if (pending.length > 0 && !flags.includes("--yes")) {
-    const list = namesInText.format(pending.map(p => p.name));
-    if (!interactive) { out(`Approval needed for ${list}. Use --yes to approve.\n`); return 3; }
-    const origin = from === null ? "" : ` from ${from}`;
-    if (!await ask(`Allow ${list}${origin} to run with your permissions?`)) {
-      out("Cancelled.\n"); return 1;
+  for (const name of names) {
+    if (builtinPlugins().some(p => p.name === name)) { out(`${name} is supplied by Orca and updates with orca2\n`); return 1; }
+    const dest = join(paths.plugins, name);
+    if (!existsSync(join(dest, "index.ts"))) {
+      out(`${name} is not an installed plugin; install it with orca2 plugin enable ${name} --from <folder>\n`); return 1;
     }
+    const folder = from === null ? dest : resolve(from);
+    if (!existsSync(join(folder, "index.ts"))) { out(`no plugin ${name} at ${folder}\n`); return 1; }
+    const plugin = await pluginAt(name, folder);
+    if (!plugin.ok) { out(plugin.error + "\n"); return 1; }
+    const fresh = config.approved.includes(`${name}@${plugin.data.hash}`) && (!plugin.data.copy || await pluginHash(dest) === plugin.data.hash);
+    if (fresh) current.push(name); else locals.push(plugin.data);
   }
-  for (const plugin of locals) {
-    const checked = await validateAndInstall(plugin);
-    if (!checked.ok) { out(checked.error + "\n"); return 1; }
-  }
-  if (pending.length > 0) {
-    const approved = config.approved.filter(pin => !pending.some(p => pin.startsWith(p.name + "@")));
-    await saveConfig({ approved: [...approved, ...pending.map(p => `${p.name}@${p.hash}`)] });
-  }
-  return switches(names, scope, "on", out);
+  const installed = await installAndApprove(locals, { from, yes: flags.includes("--yes"), out, ask, interactive });
+  if (installed !== null) return installed;
+  for (const name of current) out(`${name} is up to date\n`);
+  if (locals.length > 0) out(`Updated ${namesInText.format(locals.map(p => p.name))}.\n`);
+  return 0;
 }
 
 export const PLUGIN_USAGE = `orca2 plugin list [--bubble [id] | --global] [--json]
@@ -250,9 +293,11 @@ export const PLUGIN_USAGE = `orca2 plugin list [--bubble [id] | --global] [--jso
   orca2 plugin new <name> [--dir <folder>]
   orca2 plugin check <name|folder>
   orca2 plugin enable <name> [name ...] [--from <folder>] [--bubble [id] | --global] [--yes]
+  orca2 plugin update <name> [name ...] [--from <folder>] [--yes]
   orca2 plugin disable <name> [--bubble [id] | --global]
   orca2 plugin inherit <name> --bubble [id]
-  Inside an agent, the default scope is the current conversation's bubble. --yes approves the installed content for non-interactive use.`;
+  Inside an agent, the default scope is the current conversation's bubble. --yes approves the installed content for non-interactive use.
+  After changing an installed plugin, update re-approves it (copying --from first) and keeps it on or off as it was.`;
 
 export async function runPlugin(args: string[], out: Out, ask: Ask, interactive: boolean): Promise<number> {
   const [action = "list", ...rest] = args;
@@ -263,20 +308,21 @@ export async function runPlugin(args: string[], out: Out, ask: Ask, interactive:
     return 0;
   }
   if (
-    !["list", "show", "config", "enable", "disable", "inherit"].includes(action) ||
+    !["list", "show", "config", "enable", "update", "disable", "inherit"].includes(action) ||
     (action !== "list" && !NAME.test(rest[0] ?? ""))
   ) {
     out(PLUGIN_USAGE + "\n");
     return 2;
   }
   const firstFlag = rest.findIndex(arg => arg.startsWith("--"));
-  const count = action === "enable" ? (firstFlag < 0 ? rest.length : firstFlag) : action === "list" ? 0 : 1;
+  const many = action === "enable" || action === "update";
+  const count = many ? (firstFlag < 0 ? rest.length : firstFlag) : action === "list" ? 0 : 1;
   const targets = [...new Set(rest.slice(0, count))];
-  if (action === "enable" && !targets.every(name => NAME.test(name))) { out(PLUGIN_USAGE + "\n"); return 2; }
+  if (many && !targets.every(name => NAME.test(name))) { out(PLUGIN_USAGE + "\n"); return 2; }
   const flags = rest.slice(count);
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
-    if (flag === "--bubble") {
+    if (flag === "--bubble" && action !== "update") {
       if (flags[i + 1] !== undefined && !flags[i + 1]?.startsWith("--")) i++;
     } else if (action === "config" && (flag === "--set" || flag === "--unset")) {
       const count = flag === "--set" ? 2 : 1;
@@ -289,16 +335,17 @@ export async function runPlugin(args: string[], out: Out, ask: Ask, interactive:
         return 2;
       }
       i += count;
-    } else if (flag === "--from" && action === "enable") i++;
+    } else if (flag === "--from" && many) i++;
     else if (!(
-      flag === "--global" ||
-      (flag === "--yes" && action === "enable") ||
+      (flag === "--global" && action !== "update") ||
+      (flag === "--yes" && many) ||
       (flag === "--json" && (action === "list" || action === "show"))
     )) {
       out(PLUGIN_USAGE + "\n");
       return 2;
     }
   }
+  if (action === "update") return withStorageLock(join(paths.runtime, "plugin-config-lock"), () => update(targets, flags, out, ask, interactive));
   const scope = await pluginScope(
     rest,
     action === "list" || action === "show" || (action === "config" && !rest.includes("--set") && !rest.includes("--unset")),

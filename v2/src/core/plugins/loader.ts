@@ -183,7 +183,8 @@ export async function availablePlugins(directory: string | null, trusted: boolea
       if (source === "user" && plugins.get(name)?.source === "builtin") continue;
       if (plugins.has(name)) { problems.push({ name, dir, problem: `a plugin named ${name} is already loaded` }); continue; }
       if (source === "user" && !config.approved.includes(`${name}@${await pluginHash(dir)}`)) {
-        problems.push({ name, dir, problem: `not approved (new or changed): run orca2 plugin enable ${name}` });
+        const changed = config.approved.some(pin => pin.startsWith(`${name}@`));
+        problems.push({ name, dir, problem: changed ? `not approved (changed): run orca2 plugin update ${name}` : `not approved (new): run orca2 plugin enable ${name}` });
         continue;
       }
       const loaded = await loadFolder(dir, name, source);

@@ -16,7 +16,7 @@ permissions, and approval is recorded for an exact version. When the user asks y
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
-4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. An agent defaults to its own bubble, including from a worker worktree. Use `--global` only for a requested global change. Verify with `orca2 plugin list --json`. Use `show` to inspect a plugin, `disable` to turn it off, and `inherit` to restore the bubble’s default. Group installed plugins in one enable command to approve them together.
+4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. After changing an installed plugin (in place or in a worktree) run `orca2 plugin update <name> [--from <folder>] --yes`: it validates, copies, re-approves the new version and leaves it on or off wherever it was; never use `enable` for that, since it also turns the plugin on. An agent defaults to its own bubble, including from a worker worktree. Use `--global` only for a requested global change. Verify with `orca2 plugin list --json`. Use `show` to inspect a plugin, `disable` to turn it off, and `inherit` to restore the bubble’s default. Group installed plugins in one enable command to approve them together.
 
 Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
 are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
