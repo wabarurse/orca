@@ -341,9 +341,11 @@ export class App {
   }
 
   private recall(dir: -1 | 1, atEdge: boolean): boolean {
-    if (!atEdge && !onRecalled(this.history, this.composer)) return false;
+    const recalled = onRecalled(this.history, this.composer);
+    if (!recalled && this.composer.text.length > 0) return false;
+    if (!recalled && this.history.at !== null) this.history = browsing(this.history.entries);
     const step: Step | null = dir === -1 ? older(this.history, this.composer) : newer(this.history);
-    if (step === null) return atEdge;
+    if (step === null) return atEdge || recalled;
     this.history = step.browse;
     this.input.restore(step.state);
     return true;

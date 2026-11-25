@@ -173,7 +173,8 @@ export class TextInput {
     const moved = editor.vertical(base, this.width, dir, goal);
     if (this.props.onVertical !== null && this.props.onVertical(dir, moved === null)) return true;
     if (moved === null) {
-      if (base.cursor !== this.s.cursor || base.anchor !== this.s.anchor) this.commit(base, "move");
+      const edge = { ...base, cursor: dir === -1 ? 0 : base.text.length };
+      if (edge.cursor !== this.s.cursor || edge.anchor !== this.s.anchor) this.commit(edge, "move");
       return true;
     }
     this.commit(moved, "move");

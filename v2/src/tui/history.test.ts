@@ -4,10 +4,9 @@ import { browsing, newer, older, onRecalled, sinceClear } from "./history";
 
 const at = (text: string) => ({ text, cursor: text.length, anchor: null });
 
-test("Up recalls older entries, Down newer ones, and Down past the newest restores the draft", () => {
+test("from an empty input Up recalls older entries, Down newer ones, and Down past the newest empties the input", () => {
   let b = browsing(["first", "/model", "third"]);
-  const draft = { text: "half typed", cursor: 4, anchor: null };
-  const one = older(b, draft);
+  const one = older(b, at(""));
   expect(one?.state).toEqual(at("third"));
   b = one?.browse ?? b;
   const two = older(b, at("third"));
@@ -20,13 +19,21 @@ test("Up recalls older entries, Down newer ones, and Down past the newest restor
   b = newer(b)?.browse ?? b;
   b = newer(b)?.browse ?? b;
   const back = newer(b);
-  expect(back?.state).toEqual(draft);
+  expect(back?.state).toEqual(at(""));
   expect(back?.browse.at).toBeNull();
   expect(newer(back?.browse ?? b)).toBeNull();
 });
 
+test("typed text is never replaced: Up recalls nothing over a draft or over an edited recalled entry", () => {
+  expect(older(browsing(["a"]), at("half typed"))).toBeNull();
+  const step = older(browsing(["a", "b"]), at(""));
+  expect(step).not.toBeNull();
+  if (step === null) return;
+  expect(older(step.browse, at("b edited"))).toBeNull();
+});
+
 test("with no history or not browsing, the arrows do nothing; a recalled entry is recognised until it is edited", () => {
-  expect(older(browsing([]), at("x"))).toBeNull();
+  expect(older(browsing([]), at(""))).toBeNull();
   expect(newer(browsing(["a"]))).toBeNull();
   const step = older(browsing(["a\nb"]), at(""));
   expect(step).not.toBeNull();

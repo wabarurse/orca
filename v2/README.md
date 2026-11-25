@@ -34,8 +34,9 @@ bun run check && bun run lint && bun test
   does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then quits. `/exit` (or
   `/quit`) quits and leaves the subagents running. Either way each chat's orchestrator daemon stays up (idle after
   `/kill`) and the next orca2 picks it up; `/stop` stops it. `/cancel` stops the running turn only. Ctrl+D quits no more.
-- **Composer history**: Up/Down recall earlier input, messages and slash commands alike, like a shell (Up only on
-  the first row of a multi-line draft, Down only on the last; Down past the newest brings the draft back). Kept per
+- **Composer history**: Up/Down recall earlier input, messages and slash commands alike, only while the composer is
+  empty or still shows an unedited recalled entry; over typed text they only move the cursor and never replace it.
+  Down past the newest empties the composer again. Kept per
   conversation in `conversations/<id>/input-history.json`, the newest 500, consecutive repeats once.
 - **Composer editing**: the composer is a `TextInput` (`src/tui/components/text-input.ts`, see
   [Editing keys](#editing-keys)) that edits like a native macOS text field: word and line movement, selection,
@@ -88,9 +89,9 @@ focuses it (closing an open picker or confirmation, like Esc).
 | ⌥←/⌥→ (also ESC b / ESC f), Ctrl+←/→ | word left / right | ⌥: Option sends Esc/Alt (below) |
 | ⌘←/⌘→, Ctrl+A / Ctrl+E | line start / end (Ctrl+A opens Agents when the composer is empty) | ⌘: kitty keyboard or a mapping |
 | ⌘↑/⌘↓, Ctrl+Home/End | start / end of the message | ⌘: kitty keyboard |
-| ↑/↓ | previous / next row, keeping the column; on the first / last row, input history | — |
+| ↑/↓ | previous / next row, keeping the column; on the first / last row, to the start / end; input history only from an empty composer | — |
 | Shift + any move above (⇧⌥ word, ⇧⌘ line/message, ⇧↑/↓ row) | extend the selection | as the move |
-| ⌘A | select all text in the input (not the screen) | kitty keyboard, and the terminal must not take ⌘A |
+| ⌘A, also Ctrl+⇧A or ⌥A | select all text in the input (not the screen) | ⌘A: kitty keyboard, and the terminal must not take ⌘A; Ctrl+⇧A: kitty keyboard; ⌥A: Option as Alt |
 | typing, paste, Backspace, Delete with a selection | replace / remove the selection; an arrow collapses it | — |
 | Backspace / Delete (Fn+Delete) | delete a character back / forward; Ctrl+D forward too | — |
 | ⌥Backspace, Ctrl+W, Ctrl+Backspace / ⌥Delete (also ESC d) | delete a word back / forward | ⌥: Option as Esc/Alt |
@@ -119,8 +120,17 @@ over the app: a ⌘ key the terminal binds itself (⌘A select all, ⌘C copy, �
 - **Terminal.app**: no kitty protocol and no ⌘ keys reach programs. ⌥←/⌥→ send ESC b/ESC f by default; turn on
   Settings → Profiles → Keyboard → *Use Option as Meta key* for ⌥Backspace/⌥Delete. Use Home/End, Ctrl+A/Ctrl+E,
   Ctrl+U/Ctrl+K, Ctrl+Z/Ctrl+Y and Shift+arrows instead of the ⌘ keys; select all is not available.
-- **Rex**: built on libghostty, it speaks the kitty keyboard protocol and has an Option-as-Alt setting; ⌘ shortcuts
-  Rex binds itself (select all, copy, paste) stay with Rex. Not verified key by key.
+- **Rex**: speaks the kitty keyboard protocol (orca2 gets flags 5), and with it sends every ⌘ key orca2 uses:
+  ⌘A arrives as `CSI 97;9u`, ⌘Z `CSI 122;9u`, ⌘⇧Z `CSI 122;10u`, ⌘← `CSI 1;9D`, ⌘Backspace `CSI 127;9u`,
+  ⌥← `CSI 1;3D`, Ctrl+⇧A `CSI 97;6u`. But the Rex app keeps ⌘A for its own *Select All in Pane*
+  (`pane.select_all`), so a pressed ⌘A never reaches the program. Give it to the terminal in `~/.config/rex/init.lua`
+  and run `rex config reload`:
+
+  ```lua
+  rex.bind("cmd+a", "pane.send_key", { key = "cmd+a" })
+  ```
+
+  (`rex.unbind("cmd+a")` also frees it.) Without that, Ctrl+⇧A selects all in the composer.
 
 ## Plugins
 

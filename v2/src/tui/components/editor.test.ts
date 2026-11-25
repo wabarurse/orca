@@ -95,3 +95,9 @@ test("keys that are not editing keys are left to the caller", () => {
   expect(editor.apply(s, { name: "up" })).toBeNull();
   expect(editor.apply(s, { name: "n", ctrl: true })).toBeNull();
 });
+
+test("Ctrl+Shift+A and Option+A select all too, for terminals that keep Cmd+A for themselves", () => {
+  const s = editor.at("draft text", 2);
+  expect(shown(run(s, { name: "a", ctrl: true, shift: true }))).toBe("[draft text]");
+  expect(shown(run(s, { name: "a", alt: true }))).toBe("[draft text]");
+});

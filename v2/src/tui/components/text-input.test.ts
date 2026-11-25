@@ -117,3 +117,13 @@ test("rendering shows a placeholder when empty and scrolls inside a fixed height
   expect(shown.rows).toEqual(["3", "4", "5"]);
   expect(shown.row).toBe(2);
 });
+
+test("Up on the first row or Down on the last moves to the start or end when onVertical leaves the key alone", async () => {
+  const input = new TextInput({ onVertical: () => false }, "one\ntwo", true);
+  input.render(20, 5);
+  await press(input, { name: "down" });
+  expect(input.state.cursor).toBe(7);
+  await press(input, { name: "up" }, { name: "up" });
+  expect(input.state.cursor).toBe(0);
+  expect(input.value).toBe("one\ntwo");
+});

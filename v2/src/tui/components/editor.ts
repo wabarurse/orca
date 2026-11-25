@@ -140,7 +140,7 @@ const CTRL: Record<string, Bound> = {
   backspace: editing(deleteWordBack), delete: editing(deleteWordForward),
 };
 const ALT: Record<string, Bound> = {
-  b: moving(wordLeft), f: moving(wordRight), d: editing(deleteWordForward),
+  a: { action: selectAll, kind: "move" }, b: moving(wordLeft), f: moving(wordRight), d: editing(deleteWordForward),
   left: moving(wordLeft), right: moving(wordRight), home: moving(home), end: moving(end),
   backspace: editing(deleteWordBack), delete: editing(deleteWordForward),
 };
@@ -158,6 +158,7 @@ const typed = (text: string): EditKind => [...segmenter.segment(text)].length !=
 export function apply(s: EditState, key: Key): Edit | null {
   if (key.name === "char") return { state: insert(s, key.text ?? ""), kind: typed(key.text ?? "") };
   if (key.name === "paste") return { state: insert(s, key.text ?? ""), kind: "other" };
+  if (key.name === "a" && key.ctrl === true && key.shift === true && key.cmd !== true) return { state: selectAll(s), kind: "move" };
   const table = key.cmd === true ? CMD : key.ctrl === true ? CTRL : key.alt === true ? ALT : PLAIN;
   const bound = Object.hasOwn(table, key.name) ? table[key.name] : undefined;
   return bound === undefined ? null : { state: bound.action(s, key.shift === true), kind: bound.kind };
