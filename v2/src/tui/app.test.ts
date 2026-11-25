@@ -13,8 +13,10 @@ import { setTrust } from "../core/trust";
 import { openTranscript } from "../core/transcript";
 import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
+import { main } from "../cli/main";
+import { COMMANDS, type Run } from "../core/commands";
 import { App } from "./app";
-import type { Key, screens, Terminal } from "./components";
+import { selectionMarks, type Key, type screens, type Terminal } from "./components";
 
 const home = tempHome("tui");
 
@@ -141,10 +143,76 @@ describe("tui", () => {
     expect(await t.shows("login cancelled")).not.toContain("waiting for login");
     await t.type("/login gemini");
     await t.press({ name: "enter" });
-    await t.shows("/usage: login anthropic|openai");
+    await t.shows("/login: usage: login anthropic|openai");
     await t.type("/accounts");
     await t.press({ name: "enter" });
-    expect(await t.shows("no accounts")).toContain("no accounts; /login signs in");
+    expect(await t.shows("no accounts")).toContain("/accounts: no accounts; login signs in");
+  });
+
+  test("every runnable slash command and its orca2 CLI command call the same table entry with the same arguments", async () => {
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    const calls: string[] = [];
+    const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
+    for (const c of COMMANDS) if (c.run !== null) c.run = async (args, ctx) => { calls.push(`${c.name} ${args.join(",")} ${(await ctx.conversation()).ok ? "chat" : "none"}`); return { ok: true, data: `ran ${c.name}` }; };
+    const write = process.stdout.write.bind(process.stdout);
+    try {
+      for (const c of COMMANDS.filter(x => x.run !== null && x.name !== "kill")) {
+        process.stdout.write = (): boolean => true;
+        try { expect(await main([c.name, "arg", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+        await t.type(`/${c.name} arg`);
+        await t.press({ name: "enter" });
+        await t.shows(`ran ${c.name}`);
+      }
+      process.stdout.write = (): boolean => true;
+      try { expect(await main(["kill", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+      await t.type("/kill");
+      await t.press({ name: "enter" });
+      await Bun.sleep(100);
+    } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
+    const runnable = COMMANDS.filter(c => c.run !== null && c.name !== "kill").map(c => c.name);
+    expect(calls).toEqual([...runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]), "kill  chat", "kill  chat"]);
+    expect(t.app["quitting"]).toBe(true);
+  });
+
+  test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    await t.app["transcript"].append({ type: "message", inbox: [], message: { role: "assistant", content: "before the clear" } });
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    expect(await t.shows("before the clear")).toContain("before the clear");
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (): boolean => true;
+    try { expect(await main(["clear-chat", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    await t.app.poll();
+    expect(t.text()).not.toContain("before the clear");
+    t.app.stop();
+    await Bun.sleep(5);
+    const later = await app(home.path());
+    expect(await later.shows("before the clear")).toContain("before the clear");
+    later.app.stop();
+  });
+
+  test("a model, effort or fast change made through the CLI shows in a running TUI's header on its next poll", async () => {
+    await saveConfig({ model: "claude-opus-5-5" });
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    const header = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (): boolean => true;
+    try {
+      expect(await main(["effort", "high", "--conversation", id])).toBe(0);
+      expect(await main(["fast", "on", "--conversation", id])).toBe(0);
+    } finally { process.stdout.write = write; }
+    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+    await t.app.poll();
+    expect(header()).toContain("claude-opus-5-5 · high · fast");
+    expect(t.app["conversation"].effort).toBe("high");
+    await saveConfig({ model: "claude-sonnet-5-5" });
+    t.app.stop();
   });
 
   test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
@@ -158,6 +226,12 @@ describe("tui", () => {
     await t.press({ name: "enter" });
     expect((await loadConfig()).runner).toBe("tmux");
     expect(await t.shows("new agents start in tmux")).toContain("new agents start in tmux");
+    await t.type("/mux");
+    await t.press({ name: "enter" });
+    const menu = await t.shows("runner for new agents");
+    expect(menu).toMatch(/❯ ● tmux/);
+    expect(menu).toContain("  plain");
+    await t.press({ name: "escape" });
     await saveConfig({ plugins: [], runner: "plain" });
     t.app.stop();
   });
@@ -218,6 +292,39 @@ describe("tui", () => {
     expect(await pending(id, "orchestrator")).toEqual([]);
     await t.press({ name: "enter" });
     expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
+    t.app.stop();
+  });
+
+  test("a tab action's pick shows every option on the work page with the selection highlighted; j moves it, Enter sends it, a digit picks at once, Esc cancels", async () => {
+    registerBuiltins([EXAMPLE]);
+    await saveConfig({ plugins: ["example"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-pick-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    await t.type("/pin first");
+    await t.press({ name: "enter" });
+    await t.press({ name: "a", ctrl: true }, { name: "tab" });
+    expect(await t.shows("[Pins]")).toContain("first");
+    await t.press({ name: "char", text: "b" });
+    const shown = await t.shows("who pinned p1?");
+    expect(shown).toContain("❯ 1 ● user");
+    expect(shown).toContain("  2   agent");
+    expect(shown).toContain("1-2 picks   esc cancels");
+    const screen = t.screen();
+    expect(screen?.kind === "page" ? screen.rows.filter(r => r.includes(selectionMarks().on)).map(r => Bun.stripANSI(r)) : []).toEqual(["❯ 1 ● user"]);
+    await t.press({ name: "char", text: "j" });
+    expect(await t.shows("❯ 2   agent")).toContain("  1 ● user");
+    await t.press({ name: "enter" });
+    expect(await t.shows("p1 pinned by agent")).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    expect(await t.shows("❯ 2 ● agent")).toContain("who pinned p1?");
+    await t.press({ name: "escape" });
+    expect(t.text()).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    await t.shows("who pinned p1?");
+    await t.press({ name: "char", text: "1" });
+    expect(await t.shows("p1 pinned by user")).toContain("user");
+    await saveConfig({ plugins: [] });
     t.app.stop();
   });
 

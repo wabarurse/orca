@@ -2,11 +2,10 @@ import { provider } from "../api";
 import { accounts, type Account, type ProviderName } from "../api/auth";
 import { modelCapabilities, providerFor } from "../api/model";
 import { loadConfig, ok, fail, saveConfig, type Result } from "../config";
-import { saveConversation, type Conversation } from "../core/conversations";
-import { learnCatalog } from "../core/session";
-import { dim } from "./components";
+import { saveConversation, type Conversation } from "./conversations";
+import { learnCatalog } from "./session";
 
-export type Choice<T> = { value: T; label: string; current: boolean };
+export type Choice<T> = { value: T; label: string; detail: string; current: boolean };
 
 export const RECENT_MODELS = 6;
 
@@ -34,22 +33,22 @@ export async function modelChoices(model: string): Promise<Result<Choice<string>
   if (!loaded.ok) return loaded;
   try {
     const ids = await loaded.data.models();
-    return ok(recentModels(ids, model).map(id => ({ value: id, label: `${id}  ${dim(account.provider)}`, current: id === model })));
+    return ok(recentModels(ids, model).map(id => ({ value: id, label: id, detail: account.provider, current: id === model })));
   } catch (error) { return fail(`${account.provider}: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
 export function effortChoices(model: string, effort: string | null): Choice<string>[] {
   const current = effort ?? "default";
-  return ["default", ...modelCapabilities(model).effort].map(value => ({ value, label: value, current: value === current }));
+  return ["default", ...modelCapabilities(model).effort].map(value => ({ value, label: value, detail: "", current: value === current }));
 }
 
 export function fastChoices(fast: boolean): Choice<boolean>[] {
-  return [{ value: false, label: "off", current: !fast }, { value: true, label: "on", current: fast }];
+  return [{ value: false, label: "off", detail: "", current: !fast }, { value: true, label: "on", detail: "", current: fast }];
 }
 
 export async function accountChoices(model: string): Promise<Choice<Account>[]> {
   const selected = await selectedAccount(model);
-  return (await accounts(selected)).filter(a => a.ok).map(a => ({ value: a, current: a.active, label: `${a.id.padEnd(22)} ${dim(a.source)}` }));
+  return (await accounts(selected)).filter(a => a.ok).map(a => ({ value: a, current: a.active, label: a.id.padEnd(22), detail: a.source }));
 }
 
 export async function setModel(conversation: Conversation, model: string): Promise<Result<Conversation>> {
@@ -91,5 +90,5 @@ export async function useAccount(conversation: Conversation, account: Account): 
   await saveConfig(account.provider === "anthropic" ? { account: profile } : { openaiAccount: profile });
   const moved = await setModel(conversation, next);
   if (!moved.ok) return moved;
-  return ok({ conversation: moved.data, note: `using ${account.id}; the model changed from ${model} to ${next} (/model picks another)` });
+  return ok({ conversation: moved.data, note: `using ${account.id}; the model changed from ${model} to ${next} (model picks another)` });
 }

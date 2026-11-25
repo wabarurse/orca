@@ -2,25 +2,25 @@ import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
-import { accounts, parseLogin, signIn, type LoginRequest, type ProviderName } from "../api/auth";
 import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
 import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
-import { removeConversation, renameConversation } from "../core/lifecycle";
-import { cancel, compactNow, ensureDaemon, say, stopDaemon, unsay } from "../core/daemon/client";
+import { removeConversation } from "../core/lifecycle";
+import { cancel, ensureDaemon, say, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
+import { COMMANDS, command as coreCommand, readViewClear, type CommandContext, type CoreCommand, type Run } from "../core/commands";
 import { readInputHistory, recordInput, remember } from "../core/input-history";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
-import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
+import type { Attach, Fold, PickOptions, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
-import { chooseRunner, runnerNames, runners, stopAgent, stopAgents } from "../core/runner/runtime";
+import { runners, stopAgent, stopAgents } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
-import { setTrust, trustState } from "../core/trust";
+import { trustState } from "../core/trust";
 import type { AgentEvent, Message, OpenSpan } from "../core/types";
 import { bold, dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
@@ -31,12 +31,13 @@ import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail, userItem, type ComposerBox } from "./view";
 import { browsing, newer, older, onRecalled, sinceClear, type Browse, type Step } from "./history";
 import { renderWork, type WorkTab } from "./work";
-import { accountChoices, effortChoices, fastChoices, learnModel, modelChoices, setEffort, setFast, setModel, useAccount, type Choice } from "./settings";
+import { pickHint, pickKey, pickRows, pickStart, type PickState } from "./pick";
+import { learnModel, type Choice } from "../core/settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
   | { kind: "input"; prompt: string; input: TextInput; resolve: (text: string | null) => void }
-  | { kind: "pick"; title: string; options: string[]; current: number | null; index: number; resolve: (index: number | null) => void };
+  | { kind: "pick"; state: PickState; resolve: (index: number | null) => void };
 
 type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string; archiveOpen: boolean };
 
@@ -79,6 +80,8 @@ export class App {
   private box: { top: number; box: ComposerBox } | null = null;
   private history: Browse = browsing([]);
   private cleared = new Map<string, string | null>();
+  private viewClears = new Map<string, number>();
+  private readonly openedAt = Date.now();
   private images: string[] = [];
   private queued: Message[] = [];
   private confirms: Confirm[] = [];
@@ -238,20 +241,38 @@ export class App {
       if (n !== null && n > 0) parts.push(count.label(n));
     }
     this.counts = parts.join(" │ ");
-    const config = await loadConfig();
-    const meta = await readConversation(id);
-    this.model = meta?.model ?? config.model;
-    this.learn(this.model);
-    this.settings = settingsLabel(meta);
-    this.bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
-    this.noBubble = meta?.noBubble === true;
-    this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
+    await this.refreshHeader();
     for (const tab of this.openTabs) {
       if (tab.id === id) { tab.busy = this.busy; continue; }
       const status = await readStatus(tab.id);
       tab.busy = status !== null && status.state === "turn" && await daemonPid(tab.id) !== null;
     }
     if (this.page !== null) await this.loadPage();
+  }
+
+  private async refreshHeader(): Promise<void> {
+    const id = this.conversation.id;
+    const config = await loadConfig();
+    const meta = await readConversation(id);
+    const bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    const viewClear = await readViewClear(id);
+    if (this.conversation.id !== id) return;
+    if (viewClear !== null && viewClear.at > (this.viewClears.get(id) ?? this.openedAt)) {
+      this.viewClears.set(id, viewClear.at);
+      this.cleared.set(id, viewClear.head);
+      this.head = "unset";
+    }
+    if (meta !== null) {
+      this.current = { conversation: meta, transcript: this.transcript };
+      const tab = this.openTabs.find(t => t.id === id);
+      if (tab !== undefined && tab.name !== meta.name) { tab.name = meta.name; this.deps.terminal.setTitle?.(`orca2 · ${meta.name}`); }
+    }
+    this.model = meta?.model ?? config.model;
+    this.learn(this.model);
+    this.settings = settingsLabel(meta);
+    this.bubbleName = bubbleName;
+    this.noBubble = meta?.noBubble === true;
+    this.account = this.model.startsWith("claude") ? `anthropic:${config.account.length > 0 ? config.account : "default"}` : `openai:${config.openaiAccount.length > 0 ? config.openaiAccount : "default"}`;
   }
 
   private async answerConfirms(): Promise<void> {
@@ -263,8 +284,8 @@ export class App {
 
   private ask(modal: { kind: "confirm"; question: string }): Promise<boolean>;
   private ask(modal: { kind: "input"; prompt: string; initial: string }): Promise<string | null>;
-  private ask(modal: { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<number | null>;
-  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<boolean | string | number | null> {
+  private ask(modal: { kind: "pick"; title: string; options: string[]; opts: PickOptions | undefined }): Promise<number | null>;
+  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; opts: PickOptions | undefined }): Promise<boolean | string | number | null> {
     return new Promise(resolve => {
       if (modal.kind === "confirm") this.modal = { kind: "confirm", question: modal.question, resolve: yes => { this.modal = null; resolve(yes); this.draw(); } };
       else if (modal.kind === "input") {
@@ -272,7 +293,7 @@ export class App {
         const input = new TextInput({ multiline: false, clipboard: this.clipboard(), onSubmit: text => { done(text); }, onNote: (text, error) => { this.flash(text, error); } }, modal.initial);
         this.modal = { kind: "input", prompt: modal.prompt, input, resolve: done };
       }
-      else this.modal = { kind: "pick", title: modal.title, options: modal.options, current: modal.current, index: Math.max(0, modal.current ?? 0), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
+      else this.modal = { kind: "pick", state: pickStart(modal.title, modal.options, modal.opts), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
       this.draw();
     });
   }
@@ -281,7 +302,7 @@ export class App {
     return { ...bound.ctx, note: text => { this.flash(text); },
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
-      pick: (title, options) => this.ask({ kind: "pick", title, options, current: null }),
+      pick: (title, options, opts) => this.ask({ kind: "pick", title, options, opts }),
       say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
       open: async path => { await this.deps.open(path); },
       attach: async plan => { await this.attach(plan); } };
@@ -368,14 +389,6 @@ export class App {
     this.draw();
   }
 
-  private clearChat(): void {
-    const id = this.conversation.id;
-    this.transcript.refresh();
-    this.cleared.set(id, this.transcript.head());
-    this.head = "unset";
-    this.flash("chat view cleared; the transcript, memory and agent context are unchanged, and a restart shows it again");
-  }
-
   private async remember(text: string): Promise<void> {
     const id = this.conversation.id;
     this.history = browsing(remember(this.history.entries, text));
@@ -390,10 +403,9 @@ export class App {
       return;
     }
     if (modal.kind === "pick") {
-      if (key.name === "escape") modal.resolve(null);
-      else if (key.name === "enter") modal.resolve(modal.index);
-      else if (key.name === "up" || (key.name === "char" && key.text === "k")) modal.index = Math.max(0, modal.index - 1);
-      else if (key.name === "down" || (key.name === "char" && key.text === "j")) modal.index = Math.min(modal.options.length - 1, modal.index + 1);
+      const step = pickKey(modal.state, key);
+      if (step.kind === "done") { modal.resolve(step.index); return; }
+      if (step.kind === "move") modal.state = step.state;
       this.draw();
       return;
     }
@@ -446,20 +458,6 @@ export class App {
     this.draw();
   }
 
-  private async rename(args: string): Promise<void> {
-    const requested = args.trim().length > 0 ? args : await this.ask({ kind: "input", prompt: "rename to ", initial: this.conversation.name });
-    if (requested === null) return;
-    const renamed = await renameConversation(this.conversation.id, requested);
-    if (!renamed.ok) { this.flash(`/rename: ${renamed.error}`, true); return; }
-    const { conversation, bubble } = renamed.data;
-    this.current = { conversation, transcript: this.transcript };
-    const tab = this.openTabs.find(t => t.id === conversation.id);
-    if (tab !== undefined) tab.name = conversation.name;
-    if (bubble !== null) this.bubbleName = bubble;
-    this.deps.terminal.setTitle?.(`orca2 · ${conversation.name}`);
-    this.flash(`renamed to ${conversation.name}${bubble === null ? "" : " (its bubble too)"}`);
-  }
-
   private async closeTab(): Promise<void> {
     if (this.openTabs.length < 2) { this.flash("the last open chat stays open"); return; }
     const at = this.openTabs.findIndex(tab => tab.id === this.conversation.id);
@@ -480,7 +478,7 @@ export class App {
 
   private async chooseBubble(title: string): Promise<BubbleChoice | null> {
     const { options, choices } = await bubbleChoices(this.deps.directory);
-    const pick = await this.ask({ kind: "pick", title, options, current: null });
+    const pick = await this.ask({ kind: "pick", title, options, opts: undefined });
     return pick === null ? null : choices[pick] ?? null;
   }
 
@@ -529,139 +527,70 @@ export class App {
   private async command(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
-    const id = this.conversation.id;
     if (name === "quit" || name === "exit") { await this.quit(); return; }
     if (name === "kill") { await this.kill(); return; }
-    if (name === "cancel") { if (this.busy) { await cancel(id); this.flash("cancelling…"); } else this.flash("nothing is running"); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /kill stop every agent and quit · /exit quit, agents keep running · /cancel stop the turn · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L switch chats · ↑/↓ earlier input · ⌥←/→ words · ⌘←/→ line · ⌘A select all · ⌘Z/⌘⇧Z undo/redo (Ctrl+Z/Ctrl+Y) · ⌘C/⌘X/⌘V copy/cut/paste · /rename · /close · /clear-chat · /compact /login /model /effort /fast /accounts /mux /plugins /trust /stop${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
-    if (name === "compact") { await compactNow(id); if (await this.startDaemon(id)) this.flash("compacting…"); return; }
-    if (name === "rename") { await this.rename(args); return; }
-    if (name === "clear-chat") { this.clearChat(); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /kill stop every agent and quit · /exit quit, agents keep running · /cancel stop the turn · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L switch chats · ↑/↓ earlier input · ⌥←/→ words · ⌘←/→ line · ⌘A select all · ⌘Z/⌘⇧Z undo/redo (Ctrl+Z/Ctrl+Y) · ⌘C/⌘X/⌘V copy/cut/paste · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
     if (name === "close") { await this.closeTab(); return; }
-    if (name === "stop") { await stopDaemon(id); this.flash("daemon stopped"); return; }
-    if (name === "trust") { await setTrust(this.deps.directory, true); this.flash("folder trusted again (restart agents to load its instructions)"); return; }
-    if (name === "model" || name === "effort" || name === "fast" || name === "accounts") { await this.setting(name, args.trim()); return; }
-    if (name === "login") { await this.loginCommand(args.trim()); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
-    if (name === "mux") { await this.mux(args.trim()); return; }
+    const core = coreCommand(name);
+    if (core !== null && core.run !== null) { await this.runCore(core, core.run, rest.filter(a => a.length > 0)); return; }
     const own = this.uis.flatMap(bound => bound.ui.commands.map(command => ({ bound, command }))).find(c => c.command.name === name);
     if (own === undefined) { this.flash(`unknown command /${name}`); return; }
     try { await own.command.run(args, this.host(own.bound)); } catch (error) { this.flash(`/${name}: ${errorMessage(error)}`, true); }
   }
 
+  private commandContext(signal: AbortSignal | null, write: (text: string) => void): CommandContext {
+    const id = this.conversation.id;
+    const fallback = this.conversation;
+    return {
+      conversation: async () => ok((await readConversation(id)) ?? fallback),
+      directory: this.deps.directory,
+      ensureDaemon: conversation => this.deps.ensureDaemon(conversation).catch((error: unknown) => fail(errorMessage(error))),
+      stopAgents: conversation => this.deps.stopAgents(conversation),
+      write,
+      openBrowser: async url => { await this.deps.openUrl(url); },
+      signal,
+    };
+  }
+
+  private async runCore(c: CoreCommand, run: Run, given: string[]): Promise<void> {
+    if (c.name === "login" && this.signing !== null) { this.flash("a sign-in is already waiting; esc cancels it", true); return; }
+    const signing = c.name === "login" ? { controller: new AbortController(), text: "signing in…   esc cancels" } : null;
+    const ctx = this.commandContext(signing === null ? null : signing.controller.signal, text => { if (signing !== null) { signing.text = `${text.trim()}   esc cancels`; this.draw(); } });
+    let args = given;
+    if (args.length === 0 && c.ask !== null) {
+      if (c.ask.kind === "input") {
+        const typed = await this.ask({ kind: "input", prompt: c.ask.prompt, initial: await c.ask.initial(ctx) });
+        if (typed === null) return;
+        args = [typed];
+      } else {
+        const listed = await c.ask.choices(ctx);
+        if (!listed.ok) { this.flash(`/${c.name}: ${listed.error}`, true); return; }
+        const picked = await this.choose(listed.data.title, listed.data.choices);
+        if (picked === null) return;
+        args = [picked];
+      }
+    }
+    this.signing = signing;
+    this.draw();
+    const done = await run(args, ctx).catch((error: unknown) => fail(errorMessage(error)));
+    if (signing !== null) this.signing = null;
+    if (!done.ok) { this.flash(`/${c.name}: ${done.error}`, true); return; }
+    await this.refreshHeader();
+    this.flash(done.data);
+  }
+
   private async choose<T>(title: string, choices: Choice<T>[]): Promise<T | null> {
     if (choices.length === 0) return null;
     const at = choices.findIndex(c => c.current);
-    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.label), current: at === -1 ? null : at });
+    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.detail.length > 0 ? `${c.label}  ${c.detail}` : c.label), opts: { current: at === -1 ? null : at } });
     return picked === null ? null : choices[picked]?.value ?? null;
-  }
-
-  private async setting(name: "model" | "effort" | "fast" | "accounts", arg: string): Promise<void> {
-    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
-    const model = conversation.model ?? (await loadConfig()).model;
-    let saved: Result<Conversation> | null = null;
-    let note = "";
-    if (name === "model") {
-      let wanted: string | null = arg;
-      if (wanted.length === 0) {
-        const offered = await modelChoices(model);
-        if (!offered.ok) { this.flash(offered.error, true); return; }
-        wanted = await this.choose("switch model   (/accounts for another provider)", offered.data);
-      }
-      if (wanted === null) return;
-      saved = await setModel(conversation, wanted);
-      note = `model ${wanted} from the next request`;
-    } else if (name === "effort") {
-      await learnModel(model);
-      const level = arg.length > 0 ? arg : await this.choose(`effort for ${model}   (/effort <level|default> sets directly)`, effortChoices(model, conversation.effort));
-      if (level === null) return;
-      saved = await setEffort(conversation, level);
-      note = `effort for ${model}: ${level} from the next request`;
-    } else if (name === "fast") {
-      if (arg.length > 0 && arg !== "on" && arg !== "off") { this.flash("usage: /fast [on|off]", true); return; }
-      await learnModel(model);
-      const on = arg.length > 0 ? arg === "on" : await this.choose(`fast mode for ${model}   (/fast on|off sets directly)`, fastChoices(conversation.fast));
-      if (on === null) return;
-      saved = await setFast(conversation, on);
-      note = `fast for ${model}: ${on ? "on" : "off"} from the next request`;
-    } else {
-      const listed = await accountChoices(model);
-      if (listed.length === 0) { this.flash("no accounts; /login signs in"); return; }
-      const account = await this.choose("accounts: enter uses one for this chat", listed);
-      if (account === null) return;
-      const used = await useAccount(conversation, account);
-      saved = used.ok ? ok(used.data.conversation) : used;
-      note = used.ok ? used.data.note : "";
-    }
-    this.saved(saved, model, note);
-  }
-
-  private saved(saved: Result<Conversation>, model: string, note: string): void {
-    if (!saved.ok) { this.flash(saved.error, true); return; }
-    if (saved.data.id === this.conversation.id) {
-      this.current = { conversation: saved.data, transcript: this.transcript };
-      this.model = saved.data.model ?? model;
-      this.learn(this.model);
-      this.settings = settingsLabel(saved.data);
-      this.lastSlow = 0;
-    }
-    this.flash(note);
-  }
-
-  private async loginCommand(arg: string): Promise<void> {
-    if (arg.length > 0) {
-      const request = parseLogin(arg.split(/\s+/));
-      if (request.ok) await this.login(request.data); else this.flash(`/${request.error}`, true);
-      return;
-    }
-    const provider = await this.choose<ProviderName>("sign in   (/login <provider> [profile] [--import] sets directly)", [
-      { value: "anthropic", label: `anthropic  ${dim("claude subscription")}`, current: false },
-      { value: "openai", label: `openai     ${dim("chatgpt / codex subscription")}`, current: false },
-    ]);
-    if (provider !== null) await this.login({ provider, profile: "default", imported: false });
-  }
-
-  private async login(request: LoginRequest): Promise<void> {
-    if (this.signing !== null) { this.flash("a sign-in is already waiting; esc cancels it", true); return; }
-    const id = `${request.provider}:${request.profile}`;
-    const signing = { controller: new AbortController(), text: `signing in to ${id}…   esc cancels` };
-    this.signing = signing;
-    this.draw();
-    const signed = await signIn(request, {
-      write: text => { signing.text = `${text.trim()}   esc cancels`; this.draw(); },
-      openBrowser: async url => { await this.deps.openUrl(url); },
-      signal: signing.controller.signal,
-    }).catch((error: unknown) => fail(errorMessage(error)));
-    this.signing = null;
-    if (!signed.ok) { this.flash(signed.error, true); return; }
-    const account = (await accounts()).find(a => a.provider === request.provider && a.profile === request.profile);
-    const conversation = (await readConversation(this.conversation.id)) ?? this.conversation;
-    const model = conversation.model ?? (await loadConfig()).model;
-    if (account === undefined || !account.ok) { this.flash(`signed in to ${id}, but it does not show as signed in yet`, true); return; }
-    const used = await useAccount(conversation, account);
-    this.saved(used.ok ? ok(used.data.conversation) : used, model, used.ok ? `signed in to ${id}; ${used.data.note}` : "");
   }
 
   private commands(): { name: string }[] {
     const seen = new Map<string, { name: string }>();
     for (const command of this.uis.flatMap(bound => bound.ui.commands)) if (!seen.has(command.name)) seen.set(command.name, command);
     return [...seen.values()];
-  }
-
-  private async mux(wanted: string): Promise<void> {
-    const id = this.conversation.id;
-    const name = wanted.length > 0 ? wanted : await this.pickRunner(id);
-    if (name === null) return;
-    const chosen = await chooseRunner(id, name);
-    this.flash(chosen.ok ? `new agents start in ${chosen.data}; running ones stay where they are` : chosen.error);
-  }
-
-  private async pickRunner(conversation: string): Promise<string | null> {
-    const names = await runnerNames(conversation);
-    const current = (await loadConfig()).runner;
-    const at = names.indexOf(current);
-    const picked = await this.ask({ kind: "pick", title: "runner for new agents", options: names, current: at === -1 ? null : at });
-    return picked === null ? null : names[picked] ?? null;
   }
 
   private pluginPages(): Map<string, Tab[]> {
@@ -696,10 +625,11 @@ export class App {
   private async kill(): Promise<void> {
     if (this.quitting) return;
     this.flash("stopping every agent, then quitting…");
+    const kill = coreCommand("kill")?.run ?? null;
     for (const tab of this.openTabs) {
-      const status = await readStatus(tab.id).catch(() => null);
-      if (status !== null && status.state === "turn") await cancel(tab.id).catch(() => undefined);
-      await this.deps.stopAgents(tab.id).catch((): string[] => []);
+      const meta = await readConversation(tab.id);
+      if (kill === null || meta === null) continue;
+      await kill([], { ...this.commandContext(null, () => undefined), conversation: async () => ok(meta) }).catch(() => undefined);
     }
     await this.quit();
   }
@@ -886,7 +816,7 @@ export class App {
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
-        details: this.page.details, detailTop: this.page.detailTop, status, error: this.page.error }, t.cols, t.rows), cursor: 0, col: 0 });
+        pick: this.modal?.kind === "pick" ? this.modal.state : null, details: this.page.details, detailTop: this.page.detailTop, status, error: this.page.error }, t.cols, t.rows), cursor: 0, col: 0 });
       return;
     }
     const cols = t.cols;
@@ -899,13 +829,7 @@ export class App {
     let cursor: { row: number; col: number } | null = null;
     if (this.modal !== null && this.modal.kind !== "input") {
       footer.push(fit(this.modalLine(this.modal), cols));
-      if (this.modal.kind === "pick") {
-        const pick = this.modal;
-        const start = Math.max(0, Math.min(pick.index - PICK_ROWS + 1, pick.options.length - PICK_ROWS));
-        const marks = pick.current !== null;
-        pick.options.slice(start, start + PICK_ROWS).forEach((option, i) => { footer.push(fit(`${start + i === pick.index ? bold("❯") : " "} ${marks ? `${start + i === pick.current ? "●" : " "} ` : ""}${option}`, cols)); });
-        if (pick.options.length > PICK_ROWS) footer.push(dim(`${pick.index + 1} of ${pick.options.length}`));
-      }
+      if (this.modal.kind === "pick") footer.push(...pickRows(this.modal.state, cols, PICK_ROWS + 1));
     }
     const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, input: this.modal.input } : { prompt: "› ", input: this.input };
     const plugins = `${this.activePlugins.length} plugin${this.activePlugins.length === 1 ? "" : "s"} · Ctrl+P`;
@@ -923,7 +847,7 @@ export class App {
 
   private modalLine(modal: Modal): string {
     if (modal.kind === "confirm") return `${modal.question}  y yes · n/esc no`;
-    if (modal.kind === "pick") return dim(`${modal.title}   ↑↓ enter   esc cancels`);
+    if (modal.kind === "pick") return dim(pickHint(modal.state));
     return `${modal.prompt}${modal.input.value}`;
   }
 }

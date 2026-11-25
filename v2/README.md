@@ -166,7 +166,7 @@ To enable several installed plugins together, run `orca2 plugin enable images sa
 - **Hooks**: `beforeTool` (run with changed input, block, or ask the user), `afterTool`, `beforeRequest`, `onInput`,
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
-  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]`.
+  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `/stop` (or `orca2 stop`) and reopening orca2.
 
 ## Layout
 

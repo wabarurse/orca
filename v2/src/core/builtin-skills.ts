@@ -1,9 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import orca2 from "../../skills/orca2/SKILL.md" with { type: "text" };
 import orcaPlugin from "../../skills/orca-plugin/SKILL.md" with { type: "text" };
 import { paths } from "../config";
 
-const SKILLS: Record<string, string> = { "orca-plugin": orcaPlugin };
+const SKILLS: Record<string, string> = { orca2, "orca-plugin": orcaPlugin };
 
 export const builtinSkillsDir = (): string => join(paths.runtime, "skills");
 
