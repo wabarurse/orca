@@ -23,6 +23,21 @@ const ui: PluginUi = defineUi({
         await writePins(dir, read.data.filter(p => p.id !== row.id));
         host.note(`unpinned ${row.id}`);
       },
+    }, {
+      key: "b", label: "pinned by",
+      run: async (row, host) => {
+        if (row === null) return;
+        const by = ["user", "agent"];
+        const picked = await host.pick(`who pinned ${row.id}?`, by, { current: by.indexOf(row.status), digits: true });
+        const chosen = picked === null ? undefined : by[picked];
+        if (chosen === undefined) return;
+        const folder = await host.data("conversation");
+        if (!folder.ok) { host.note(folder.error); return; }
+        const read = await readPins(folder.data);
+        if (!read.ok) { host.note(read.error); return; }
+        await writePins(folder.data, read.data.map(p => p.id === row.id ? { ...p, by: chosen } : p));
+        host.note(`${row.id} pinned by ${chosen}`);
+      },
     }],
   }],
   counts: [{ id: "pins", count: async ctx => (await shownPins(await ctx.data("conversation"))).length, label: n => `${n} pin${n === 1 ? "" : "s"}` }],

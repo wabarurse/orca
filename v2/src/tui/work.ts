@@ -1,11 +1,17 @@
 import type { Row, Section, Tone } from "../core/plugins/types";
-import { bold, dim, fit, pastel, sanitize, visibleLength } from "./components";
+import { bold, dim, fit, pastel, plainText, sanitize, visibleLength, wordWrap } from "./components";
+import { pickRows, type PickState } from "./pick";
 
 export type WorkTab = { id: string; title: string; count: number | null };
-export type WorkView = { tabs: WorkTab[]; active: number; rows: Row[]; index: number; details: Section[]; detailTop: number; status: string; error: string | null };
+export type WorkView = { tabs: WorkTab[]; active: number; rows: Row[]; index: number; pick: PickState | null; details: Section[]; detailTop: number; status: string; error: string | null };
 
 const tone = (t: Tone, s: string): string => t === "good" ? `\x1b[${pastel.green}m${s}\x1b[0m` : t === "warn" ? `\x1b[${pastel.yellow}m${s}\x1b[0m`
   : t === "bad" ? `\x1b[${pastel.red}m${s}\x1b[0m` : t === "dim" ? dim(s) : s;
+
+function pickPane(pick: PickState, cols: number, room: number): string[] {
+  const title = wordWrap(plainText(pick.title), cols).slice(0, Math.max(1, Math.min(3, room - 2))).map(l => bold(fit(l, cols)));
+  return [...title, ...pickRows(pick, cols, Math.max(1, room - title.length))].slice(0, Math.max(1, room));
+}
 
 export function renderWork(view: WorkView, cols: number, rows: number): string[] {
   const tabLine = view.tabs.map((tab, i) => {
@@ -30,7 +36,8 @@ export function renderWork(view: WorkView, cols: number, rows: number): string[]
   const detailLines = view.details.flatMap(section => [bold(sanitize(section.title)), ...section.lines.map(l => `  ${sanitize(l)}`), ""]);
   const fixed = [head, "", dim(line("NAME", "STATUS", "INFO")), ...table, rule];
   const room = Math.max(0, rows - fixed.length - 1);
-  const details = detailLines.slice(view.detailTop, view.detailTop + room).map(l => fit(l, cols));
+  const details = view.pick !== null ? pickPane(view.pick, cols, room)
+    : detailLines.slice(view.detailTop, view.detailTop + room).map(l => fit(l, cols));
   const filler = Array.from({ length: Math.max(0, room - details.length) }, () => "");
   return [...fixed, ...details, ...filler, fit(view.status, cols)].slice(0, rows);
 }

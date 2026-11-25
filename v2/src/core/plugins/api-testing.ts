@@ -1,4 +1,4 @@
-export { item, pluginContext, present, recordingHost, toolContext, unwrap, type HostAnswers, type RecordingHost } from "./testing";
+export { item, pluginContext, present, recordingHost, toolContext, unwrap, type HostAnswers, type Picked, type RecordingHost } from "./testing";
 export { backgroundContext } from "./context";
 export { registerBuiltins, type BuiltinPlugin } from "./loader";
 export { pluginData } from "../bubbles";

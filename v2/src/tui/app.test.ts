@@ -16,7 +16,7 @@ import { tempHome } from "../test/home";
 import { main } from "../cli/main";
 import { COMMANDS, type Run } from "../core/commands";
 import { App } from "./app";
-import type { Key, screens, Terminal } from "./components";
+import { selectionMarks, type Key, type screens, type Terminal } from "./components";
 
 const home = tempHome("tui");
 
@@ -226,6 +226,12 @@ describe("tui", () => {
     await t.press({ name: "enter" });
     expect((await loadConfig()).runner).toBe("tmux");
     expect(await t.shows("new agents start in tmux")).toContain("new agents start in tmux");
+    await t.type("/mux");
+    await t.press({ name: "enter" });
+    const menu = await t.shows("runner for new agents");
+    expect(menu).toMatch(/❯ ● tmux/);
+    expect(menu).toContain("  plain");
+    await t.press({ name: "escape" });
     await saveConfig({ plugins: [], runner: "plain" });
     t.app.stop();
   });
@@ -286,6 +292,39 @@ describe("tui", () => {
     expect(await pending(id, "orchestrator")).toEqual([]);
     await t.press({ name: "enter" });
     expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
+    t.app.stop();
+  });
+
+  test("a tab action's pick shows every option on the work page with the selection highlighted; j moves it, Enter sends it, a digit picks at once, Esc cancels", async () => {
+    registerBuiltins([EXAMPLE]);
+    await saveConfig({ plugins: ["example"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-pick-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    await t.type("/pin first");
+    await t.press({ name: "enter" });
+    await t.press({ name: "a", ctrl: true }, { name: "tab" });
+    expect(await t.shows("[Pins]")).toContain("first");
+    await t.press({ name: "char", text: "b" });
+    const shown = await t.shows("who pinned p1?");
+    expect(shown).toContain("❯ 1 ● user");
+    expect(shown).toContain("  2   agent");
+    expect(shown).toContain("1-2 picks   esc cancels");
+    const screen = t.screen();
+    expect(screen?.kind === "page" ? screen.rows.filter(r => r.includes(selectionMarks().on)).map(r => Bun.stripANSI(r)) : []).toEqual(["❯ 1 ● user"]);
+    await t.press({ name: "char", text: "j" });
+    expect(await t.shows("❯ 2   agent")).toContain("  1 ● user");
+    await t.press({ name: "enter" });
+    expect(await t.shows("p1 pinned by agent")).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    expect(await t.shows("❯ 2 ● agent")).toContain("who pinned p1?");
+    await t.press({ name: "escape" });
+    expect(t.text()).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    await t.shows("who pinned p1?");
+    await t.press({ name: "char", text: "1" });
+    expect(await t.shows("p1 pinned by user")).toContain("user");
+    await saveConfig({ plugins: [] });
     t.app.stop();
   });
 

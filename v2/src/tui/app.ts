@@ -15,7 +15,7 @@ import { readInputHistory, recordInput, remember } from "../core/input-history";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
 import { availablePlugins } from "../core/plugins/loader";
-import type { Attach, Fold, Row, Section, Tab, UiHost } from "../core/plugins/types";
+import type { Attach, Fold, PickOptions, Row, Section, Tab, UiHost } from "../core/plugins/types";
 import { bubblesFor, createBubble, ensureBubble, joinBubble, leaveBubbles, readBubble, setBubblePlugin } from "../core/bubbles";
 import { runners, stopAgent, stopAgents } from "../core/runner/runtime";
 import { listRuns, live } from "../core/runner/runs";
@@ -31,12 +31,13 @@ import { loadUis, type BoundUi } from "./plugins";
 import { composerRows, items, pieces, tail, userItem, type ComposerBox } from "./view";
 import { browsing, newer, older, onRecalled, sinceClear, type Browse, type Step } from "./history";
 import { renderWork, type WorkTab } from "./work";
+import { pickHint, pickKey, pickRows, pickStart, type PickState } from "./pick";
 import { learnModel, type Choice } from "../core/settings";
 
 type Modal =
   | { kind: "confirm"; question: string; resolve: (yes: boolean) => void }
   | { kind: "input"; prompt: string; input: TextInput; resolve: (text: string | null) => void }
-  | { kind: "pick"; title: string; options: string[]; current: number | null; index: number; resolve: (index: number | null) => void };
+  | { kind: "pick"; state: PickState; resolve: (index: number | null) => void };
 
 type Page = { tab: number; index: number; detailTop: number; rows: Row[]; details: Section[]; error: string | null; status: string; archiveOpen: boolean };
 
@@ -283,8 +284,8 @@ export class App {
 
   private ask(modal: { kind: "confirm"; question: string }): Promise<boolean>;
   private ask(modal: { kind: "input"; prompt: string; initial: string }): Promise<string | null>;
-  private ask(modal: { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<number | null>;
-  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; current: number | null }): Promise<boolean | string | number | null> {
+  private ask(modal: { kind: "pick"; title: string; options: string[]; opts: PickOptions | undefined }): Promise<number | null>;
+  private ask(modal: { kind: "confirm"; question: string } | { kind: "input"; prompt: string; initial: string } | { kind: "pick"; title: string; options: string[]; opts: PickOptions | undefined }): Promise<boolean | string | number | null> {
     return new Promise(resolve => {
       if (modal.kind === "confirm") this.modal = { kind: "confirm", question: modal.question, resolve: yes => { this.modal = null; resolve(yes); this.draw(); } };
       else if (modal.kind === "input") {
@@ -292,7 +293,7 @@ export class App {
         const input = new TextInput({ multiline: false, clipboard: this.clipboard(), onSubmit: text => { done(text); }, onNote: (text, error) => { this.flash(text, error); } }, modal.initial);
         this.modal = { kind: "input", prompt: modal.prompt, input, resolve: done };
       }
-      else this.modal = { kind: "pick", title: modal.title, options: modal.options, current: modal.current, index: Math.max(0, modal.current ?? 0), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
+      else this.modal = { kind: "pick", state: pickStart(modal.title, modal.options, modal.opts), resolve: index => { this.modal = null; resolve(index); this.draw(); } };
       this.draw();
     });
   }
@@ -301,7 +302,7 @@ export class App {
     return { ...bound.ctx, note: text => { this.flash(text); },
       confirm: question => this.ask({ kind: "confirm", question }),
       input: (prompt, initial) => this.ask({ kind: "input", prompt, initial }),
-      pick: (title, options) => this.ask({ kind: "pick", title, options, current: null }),
+      pick: (title, options, opts) => this.ask({ kind: "pick", title, options, opts }),
       say: async text => { await say(this.conversation.id, text, [], "steer"); await this.startDaemon(this.conversation.id); },
       open: async path => { await this.deps.open(path); },
       attach: async plan => { await this.attach(plan); } };
@@ -402,10 +403,9 @@ export class App {
       return;
     }
     if (modal.kind === "pick") {
-      if (key.name === "escape") modal.resolve(null);
-      else if (key.name === "enter") modal.resolve(modal.index);
-      else if (key.name === "up" || (key.name === "char" && key.text === "k")) modal.index = Math.max(0, modal.index - 1);
-      else if (key.name === "down" || (key.name === "char" && key.text === "j")) modal.index = Math.min(modal.options.length - 1, modal.index + 1);
+      const step = pickKey(modal.state, key);
+      if (step.kind === "done") { modal.resolve(step.index); return; }
+      if (step.kind === "move") modal.state = step.state;
       this.draw();
       return;
     }
@@ -478,7 +478,7 @@ export class App {
 
   private async chooseBubble(title: string): Promise<BubbleChoice | null> {
     const { options, choices } = await bubbleChoices(this.deps.directory);
-    const pick = await this.ask({ kind: "pick", title, options, current: null });
+    const pick = await this.ask({ kind: "pick", title, options, opts: undefined });
     return pick === null ? null : choices[pick] ?? null;
   }
 
@@ -583,7 +583,7 @@ export class App {
   private async choose<T>(title: string, choices: Choice<T>[]): Promise<T | null> {
     if (choices.length === 0) return null;
     const at = choices.findIndex(c => c.current);
-    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.detail.length > 0 ? `${c.label}  ${dim(c.detail)}` : c.label), current: at === -1 ? null : at });
+    const picked = await this.ask({ kind: "pick", title, options: choices.map(c => c.detail.length > 0 ? `${c.label}  ${c.detail}` : c.label), opts: { current: at === -1 ? null : at } });
     return picked === null ? null : choices[picked]?.value ?? null;
   }
 
@@ -816,7 +816,7 @@ export class App {
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
-        details: this.page.details, detailTop: this.page.detailTop, status, error: this.page.error }, t.cols, t.rows), cursor: 0, col: 0 });
+        pick: this.modal?.kind === "pick" ? this.modal.state : null, details: this.page.details, detailTop: this.page.detailTop, status, error: this.page.error }, t.cols, t.rows), cursor: 0, col: 0 });
       return;
     }
     const cols = t.cols;
@@ -829,13 +829,7 @@ export class App {
     let cursor: { row: number; col: number } | null = null;
     if (this.modal !== null && this.modal.kind !== "input") {
       footer.push(fit(this.modalLine(this.modal), cols));
-      if (this.modal.kind === "pick") {
-        const pick = this.modal;
-        const start = Math.max(0, Math.min(pick.index - PICK_ROWS + 1, pick.options.length - PICK_ROWS));
-        const marks = pick.current !== null;
-        pick.options.slice(start, start + PICK_ROWS).forEach((option, i) => { footer.push(fit(`${start + i === pick.index ? bold("❯") : " "} ${marks ? `${start + i === pick.current ? "●" : " "} ` : ""}${option}`, cols)); });
-        if (pick.options.length > PICK_ROWS) footer.push(dim(`${pick.index + 1} of ${pick.options.length}`));
-      }
+      if (this.modal.kind === "pick") footer.push(...pickRows(this.modal.state, cols, PICK_ROWS + 1));
     }
     const composing = this.modal?.kind === "input" ? { prompt: this.modal.prompt, input: this.modal.input } : { prompt: "› ", input: this.input };
     const plugins = `${this.activePlugins.length} plugin${this.activePlugins.length === 1 ? "" : "s"} · Ctrl+P`;
@@ -853,7 +847,7 @@ export class App {
 
   private modalLine(modal: Modal): string {
     if (modal.kind === "confirm") return `${modal.question}  y yes · n/esc no`;
-    if (modal.kind === "pick") return dim(`${modal.title}   ↑↓ enter   esc cancels`);
+    if (modal.kind === "pick") return dim(pickHint(modal.state));
     return `${modal.prompt}${modal.input.value}`;
   }
 }
