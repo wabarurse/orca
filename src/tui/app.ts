@@ -67,7 +67,7 @@ export class App {
     if (this.page) void this.taskCounts.refresh(this.page); // opening or switching to a page reads its task count
   }
   private looseLines: string[] = [];
-  input = { text: "", cursor: 0 };
+  input = { text: "", cursor: 0 }; private inputSelected = false; // Cmd+A: the whole draft, until the next key
   /** First input row on screen, kept between frames so the input area scrolls only when the cursor leaves it. */
   private inputTop: number | undefined;
   /** Null until explicitly opened; only a footer scroll position, never a history line. */
@@ -550,7 +550,7 @@ export class App {
 
   /** The input and its laid-out area, keeping the window's top row between frames. */
   private inputFrame(reserved: number): { input: Input; area: InputArea } {
-    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, top: this.inputTop };
+    const input: Input = { prompt: this.prompt(), text: this.input.text, cursor: this.input.cursor, selected: this.inputSelected, top: this.inputTop };
     const area = inputArea(input, this.deps.term.cols, this.composerRows(), reserved);
     input.top = this.inputTop = area.top;
     return { input, area };
@@ -633,8 +633,7 @@ export class App {
   /** Copy text to the clipboard. Never awaited in the input path: a stalled pasteboard service (pbcopy can hang for the
    * whole timeout) must not freeze input or rendering; only a failure surfaces, as a note. */
   private copy(text: string): void {
-    if (!text) return;
-    void (this.deps.clipboardText ?? writeClipboardText)(text).catch(error => this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)));
+    if (text) void (this.deps.clipboardText ?? writeClipboardText)(text).catch(error => this.note(dim(`copy failed: ${error instanceof Error ? error.message : String(error)}`)));
   }
 
   /** The last drawing error said, so a frame that keeps failing is reported once. */
@@ -922,7 +921,6 @@ export class App {
   // --- menus ------------------------------------------------------------------
 
   private readonly imageLists = new ImageLists<Page>();
-
 
   openMenu<T>(title: string, choices: Choice<T>[], pick: (value: T) => Promise<void> | void, modelOperation?: number): void {
     this.beginMenu(modelOperation);
@@ -1343,6 +1341,9 @@ export class App {
     if (!this.keyEcho && k.ctrl && k.name === "o") return this.copy(this.deps.term.selection());
     if (this.work.open && !this.keyEcho && !this.clearing && !(k.ctrl && k.name === "c")) return this.work.key(k);
     this.clearNote(k);
+    if (k.cmd && k.name === "a" && !this.lettersAreCommands()) { this.inputSelected = !!this.input.text; this.copy(this.input.text); return this.draw(); }
+    const selected = this.inputSelected ? ed.selectedEdit(this.input, typedText(k), k.name) : null; this.inputSelected = false;
+    if (selected) { this.input = selected; return this.draw(); }
     // Editing within this draft is fine. Navigation/modal/send/clear/history keys
     // invalidate asynchronous reads, even if the user returns before completion.
     if (!(k.ctrl && k.name === "v") && !typedText(k) && !["left", "right", "backspace", "delete"].includes(k.name)) this.clipboardGeneration++;
@@ -1478,7 +1479,6 @@ export class App {
     if (moved) this.input = moved;
     else this.recall(dir);
   }
-
 
   /** Track input until an exact committed receipt (local callback or shared refresh); failed writes are reported explicitly. */
   private async send(page: Page, text: string, submission?: string, inputId: string = crypto.randomUUID(), attachments: ImageRef[] = []): Promise<void> {

@@ -20,7 +20,7 @@ const box = (lines: string[], cols = 20, counts: string[] = []) => {
 };
 
 function frame(over: Partial<Frame> = {}): Frame {
-  return { cols: 20, rows: 7, input: { prompt: "> ", text: "hi", cursor: 2 }, menu: null, ...over };
+  return { cols: 20, rows: 7, input: { prompt: "> ", text: "hi", cursor: 2, selected: false }, menu: null, ...over };
 }
 
 describe("wrap", () => {
@@ -81,7 +81,7 @@ describe("live", () => {
   });
 
   test("inline helper redraws by moving up exactly to the previous first row and clearing to the end", () => {
-    const first = live(frame({ rows: 12, status: "s", input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 3 } }));
+    const first = live(frame({ rows: 12, status: "s", input: { prompt: "> ", text: "one\ntwo\nthree", cursor: 3, selected: false } }));
     expect(first.shown).toEqual({ height: 5, cursor: 1 }); // input first, cursor on "> one"; the count is inside the box
     const next = live(frame({ status: "s2" }), first.shown);
     expect(next.text).toContain(erase(first.shown)); // move above the top border before erasing
@@ -117,27 +117,27 @@ describe("live", () => {
   });
 
   test("wrapped input grows, and multi-line input indents rows under the prompt", () => {
-    const f = frame({ rows: 9, input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 12 } });
+    const f = frame({ rows: 9, input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 12, selected: false } });
     expect(rows(f)).toEqual(box(["> 0123456789abcd", "  efghij"]));
     expect(liveRows(f)).toMatchObject({ cursor: 1, col: 16 });
-    const m = frame({ rows: 9, input: { prompt: "> ", text: "one\ntwo", cursor: 5 } });
+    const m = frame({ rows: 9, input: { prompt: "> ", text: "one\ntwo", cursor: 5, selected: false } });
     expect(rows(m)).toEqual(box(["> one", "  two"]));
     expect(liveRows(m)).toMatchObject({ cursor: 2, col: 5 });
   });
 
   test("the input is capped at a third of the screen and scrolls to the cursor", () => {
     const text = "1\n2\n3\n4\n5";
-    const end = frame({ rows: 9, input: { prompt: "> ", text, cursor: text.length } });
+    const end = frame({ rows: 9, input: { prompt: "> ", text, cursor: text.length, selected: false } });
     expect(rows(end)).toEqual(box(["  3", "  4", "  5"]));
     expect(liveRows(end)).toMatchObject({ cursor: 3, col: 5 });
-    const start = frame({ rows: 9, status: "s", input: { prompt: "> ", text, cursor: 0 } });
+    const start = frame({ rows: 9, status: "s", input: { prompt: "> ", text, cursor: 0, selected: false } });
     expect(rows(start)).toEqual(box(["> 1", "  2", "  3"], 20, ["s"]));
     expect(liveRows(start)).toMatchObject({ cursor: 1, col: 4 });
   });
 
   test("the input window keeps its top until the cursor leaves it", () => {
     const text = "1\n2\n3\n4\n5";
-    const area = (cursor: number, top?: number) => inputArea({ prompt: "> ", text, cursor, top }, 20, 9);
+    const area = (cursor: number, top?: number) => inputArea({ prompt: "> ", text, cursor, selected: false, top }, 20, 9);
     expect(area(0).top).toBe(0);
     expect(area(2, 0).top).toBe(0); // row 1: still in view
     expect(area(4, 0).top).toBe(0); // row 2: last row in view
@@ -148,7 +148,7 @@ describe("live", () => {
   });
 
   test("wide characters in the input place the cursor by display width", () => {
-    const f = frame({ rows: 9, cols: 10, input: { prompt: "> ", text: "你好世界ab", cursor: 6 } });
+    const f = frame({ rows: 9, cols: 10, input: { prompt: "> ", text: "你好世界ab", cursor: 6, selected: false } });
     expect(rows(f)).toEqual(box(["> 你好", "  世界", "  ab"], 10));
     expect(liveRows(f)).toMatchObject({ cursor: 3, col: 6 });
     for (const [cols, height] of [[8, 9], [20, 9], [8, 5], [2, 3], [2, 2]]) {
@@ -209,7 +209,7 @@ describe("on a faithful terminal", () => {
   });
 
   test("a 3-row wrapped input is drawn with the cursor in it, then erased", () => {
-    const f = frame({ cols: 12, rows: 12, status: "s", input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 10 } });
+    const f = frame({ cols: 12, rows: 12, status: "s", input: { prompt: "> ", text: "0123456789abcdefghij", cursor: 10, selected: false } });
     const s = term(12, 12);
     s.write("above\r\n");
     const a = live(f);
@@ -223,7 +223,7 @@ describe("on a faithful terminal", () => {
 
   test("on rows=6 a menu, a partial line and a multi-row input are capped to fit, and redraw cleanly", () => {
     const items = Array.from({ length: 8 }, (_, i) => `m${i}`);
-    const f = frame({ cols: 10, rows: 6, partial: "streaming text", status: "s", menu: { title: "pick", items, index: 5 }, input: { prompt: "> ", text: "a\nb\nc", cursor: 5 } });
+    const f = frame({ cols: 10, rows: 6, partial: "streaming text", status: "s", menu: { title: "pick", items, index: 5 }, input: { prompt: "> ", text: "a\nb\nc", cursor: 5, selected: false } });
     const { rows: r } = liveRows(f);
     expect(r.length).toBeLessThanOrEqual(6);
     const s = term(10, 6);
@@ -276,7 +276,7 @@ describe("sanitize", () => {
 describe("questions", () => {
   test("a question's form is the Questions page's: the footer never draws it", () => {
     const q: QuestionView = { text: "Which db?", options: ["postgres", "sqlite"], index: 0, default: "sqlite", count: 1, mode: "pick" };
-    const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0 }, menu: null, status: "status", question: q });
+    const live = rows({ cols: 30, rows: 5, input: { prompt: "> ", text: "", cursor: 0, selected: false }, menu: null, status: "status", question: q });
     expect(live.slice(0, 2)).toEqual(["> ", "status"]);
     expect(rows(frame({ rows: 10, menu: { title: "models", items: ["a"], index: 0 }, question: q })).join("\n")).not.toContain("Which db?");
   });

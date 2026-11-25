@@ -7,8 +7,9 @@ const NAMED: Record<string, string> = {
   pageup: "pageup", pagedown: "pagedown", delete: "delete", insert: "insert",
 };
 
-const mods = (event: KeyEvent): { ctrl?: true; alt?: true; shift?: true } => ({
+const mods = (event: KeyEvent): { ctrl?: true; alt?: true; shift?: true; cmd?: true } => ({
   ...(event.ctrl ? { ctrl: true } : {}),
+  ...(event.super === true ? { cmd: true } : {}),
   ...(event.meta || event.option ? { alt: true } : {}),
   ...(event.shift ? { shift: true } : {}),
 });
@@ -22,7 +23,7 @@ export function keyFrom(event: KeyEvent): Key | null {
   if (named !== undefined) return { name: named, ...mods(event) };
   const text = event.name === "space" ? " " : event.sequence;
   const single = event.name === "space" ? " " : event.name;
-  if (event.ctrl || event.meta || event.option) return [...single].length === 1 ? { name: single.toLowerCase(), ...mods(event) } : null;
+  if (event.ctrl || event.meta || event.option || event.super === true) return [...single].length === 1 ? { name: single.toLowerCase(), ...mods(event) } : null;
   return printable(text) ? { name: "char", text } : null;
 }
 

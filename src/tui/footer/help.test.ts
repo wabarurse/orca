@@ -15,7 +15,7 @@ const commands = new App({ term, openOrchestrator: async () => { throw new Error
 const plain = (rows: string[]) => rows.map(row => Bun.stripANSI(row).trimEnd()).join("\n");
 const frame = (cols: number, rows: number, top = 0): Frame => ({
   cols, rows, menu: null,
-  input: { prompt: "> ", text: "draft 界", cursor: 5 },
+  input: { prompt: "> ", text: "draft 界", cursor: 5, selected: false },
   status: "2 agents running │ 1 task │ inbox 1",
   help: { lines: helpLines(commands, false, cols), top },
 });

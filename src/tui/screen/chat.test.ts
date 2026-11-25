@@ -11,7 +11,7 @@ const tool = (name: string, failed = false): CallLine => ({ tool: `${name}(x)`, 
 const ask: CallLine = { tool: "ask(Which?)", summary: "asked", failed: false, kind: "question", items: ["Which?", "Why?"] };
 const plain = (rows: string[]) => rows.map(row => Bun.stripANSI(row));
 const gaps = (items: screens.ScreenItem[]) => items.map(i => i.gap);
-const frame = (over: Partial<Frame> = {}): Frame => ({ cols: 60, rows: 20, input: { prompt: "> ", text: "draft", cursor: 5 }, menu: null, status: "0 agents │ 0 tasks", ...over });
+const frame = (over: Partial<Frame> = {}): Frame => ({ cols: 60, rows: 20, input: { prompt: "> ", text: "draft", cursor: 5, selected: false }, menu: null, status: "0 agents │ 0 tasks", ...over });
 const header: screens.ScreenHeader = { tabs: [{ label: "probe", active: true, busy: false }], bubble: null, account: "anthropic:work", details: ["model · default"], fin: null };
 
 test("a user message's lines become one block without the \"> \" (keyed by its first line); the next message starts another", () => {
