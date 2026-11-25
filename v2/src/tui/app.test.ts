@@ -335,6 +335,39 @@ describe("tui", () => {
     t.app.stop();
   });
 
+  test("a tab action's pick shows every option on the work page with the selection highlighted; j moves it, Enter sends it, a digit picks at once, Esc cancels", async () => {
+    registerBuiltins([EXAMPLE]);
+    await saveConfig({ plugins: ["example"] });
+    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-pick-")));
+    await Bun.sleep(50);
+    await t.press({ name: "escape" });
+    await t.type("/pin first");
+    await t.press({ name: "enter" });
+    await t.press({ name: "a", ctrl: true }, { name: "tab" });
+    expect(await t.shows("[Pins]")).toContain("first");
+    await t.press({ name: "char", text: "b" });
+    const shown = await t.shows("who pinned p1?");
+    expect(shown).toContain("❯ 1 ● user");
+    expect(shown).toContain("  2   agent");
+    expect(shown).toContain("1-2 picks   esc cancels");
+    const screen = t.screen();
+    expect(screen?.kind === "page" ? screen.rows.filter(r => r.includes("\x1b[1;7")).map(r => Bun.stripANSI(r)) : []).toEqual(["❯ 1 ● user"]);
+    await t.press({ name: "char", text: "j" });
+    expect(await t.shows("❯ 2   agent")).toContain("  1 ● user");
+    await t.press({ name: "enter" });
+    expect(await t.shows("p1 pinned by agent")).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    expect(await t.shows("❯ 2 ● agent")).toContain("who pinned p1?");
+    await t.press({ name: "escape" });
+    expect(t.text()).not.toContain("who pinned p1?");
+    await t.press({ name: "char", text: "b" });
+    await t.shows("who pinned p1?");
+    await t.press({ name: "char", text: "1" });
+    expect(await t.shows("p1 pinned by user")).toContain("user");
+    await saveConfig({ plugins: [] });
+    t.app.stop();
+  });
+
   test("a plugin tab archives with a (rows move under a closed Archived heading), Enter opens it, u restores, A archives all after y", async () => {
     registerBuiltins([EXAMPLE]);
     await saveConfig({ plugins: ["example"] });

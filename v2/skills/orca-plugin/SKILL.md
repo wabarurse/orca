@@ -225,7 +225,9 @@ character is yours for actions, and `key: "enter"` runs on Enter.
 
 The host is the tab's `PluginContext` (so `host.conversation`, `host.data(scope)` work) plus `note`, `confirm`,
 `input`, `pick`, `say` (text to the orchestrator as the user, queued as steer input; there is no receipt) and
-`open(path)` (the desktop viewer). Commands are global: if two enabled plugins define the same name, the first
+`open(path)` (the desktop viewer). `pick(title, options, { current, digits })` lists every option with the highlighted
+one marked `❯` and inverted (j/k/arrows move it, Enter resolves with its index, Esc with null); `current` is the index
+it starts on (marked `●`, e.g. a suggested answer) and `digits: true` lets 1–9 pick at once; both are optional. Commands are global: if two enabled plugins define the same name, the first
 wins. Counts show in the composer only when above zero; keep them cheap (they run every 2s). A fold turns
 finished calls of a tool into "+ <title(n)>" with one line per item (`title(n)` includes the number:
 `n => \`${n} notes\``); `opens` is the tab an item opens.
