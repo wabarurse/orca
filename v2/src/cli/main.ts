@@ -23,8 +23,8 @@ const USAGE = `orca2 [start] [folder]            open the TUI for a folder's con
   orca2 list                            conversations
   orca2 spans [conversation] [--json]   where the wall-clock time went
   orca2 delete --conversation id        stop its agents and remove it
-  orca2 bubbles                         bubbles and the folder each belongs to
-  orca2 bubble <name|id> --dir <folder>  point a bubble at a folder (chats there are offered it)
+  orca2 bubbles                         bubbles and each one's home folder
+  orca2 bubble <name|id> --dir <folder>  set a bubble's home folder (chats there see it first)
   orca2 rename "name" [--conversation id]  rename a conversation (and its bubble while that still has the old name)
   orca2 login anthropic|openai [profile] [--import]
   orca2 accounts
@@ -114,7 +114,7 @@ export async function main(argv: string[]): Promise<number> {
     return 0;
   }
   if (command === "bubbles") {
-    for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no folder: offered nowhere)"}\n`);
+    for (const b of await listBubbles()) out(`${b.id}  ${b.name.padEnd(20)} ${b.directory ?? "(no home folder)"}\n`);
     return 0;
   }
   if (command === "bubble") {

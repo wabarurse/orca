@@ -40,7 +40,9 @@ bun run check && bun run lint && bun test
 - **Memory**: workers compact in the foreground at 90% of the window; the orchestrator keeps background rolling
   memory from 25% (small model, ~50k verbatim tail, the newest exchange always whole). Everything compaction
   replaces is archived in `archive.sqlite` first, and `memory search` finds it.
-- **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches.
+- **Bubbles**: conversations that share memory nodes, notebook pages, behavior lines and plugin switches. A bubble's
+  folder is its home, not a limit: the bubble picker (new chat, Ctrl+N, the Bubbles tab) lists the bubbles whose
+  folder holds the chat's folder first, then every other bubble labelled with its folder, and any of them can be joined.
 - **Headless**: `orca2 -p "task"` runs the orchestrator in-process until its subagents finish and prints the answer;
   `--json` prints every event (start, input, text, tool_start, tool_end, notice, usage, span_start, span_end, end) as JSON lines.
 - **Spans**: every model request, tool call, wait (for a worker, for input), worker launch, blocking compaction and
