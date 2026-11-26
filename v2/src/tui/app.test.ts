@@ -404,6 +404,25 @@ describe("tui", () => {
     a.stop();
   });
 
+  test("each open chat keeps its own draft: switching tabs saves the one and restores the other, a new tab starts empty", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-drafts-"));
+    await createConversation(dir, null);
+    await createConversation(dir, null);
+    const t = await app(dir);
+    const composer = (): string => { const screen = t.screen(); return screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : ""; };
+    await t.type("first draft");
+    await t.press({ name: "left" }, { name: "l", ctrl: true });
+    expect(composer()).not.toContain("first draft");
+    await t.type("second");
+    await t.press({ name: "h", ctrl: true });
+    expect(composer()).toContain("› first draft");
+    await t.type("!");
+    expect(composer()).toContain("› first draf!t");
+    await t.press({ name: "l", ctrl: true });
+    expect(composer()).toContain("› second");
+    t.app.stop();
+  });
+
   test("the footer counts plugins at its right; Ctrl+P lists them with their pages, Enter opens one, t turns it off for the bubble", async () => {
     registerBuiltins([EXAMPLE]);
     await saveConfig({ plugins: ["example"] });

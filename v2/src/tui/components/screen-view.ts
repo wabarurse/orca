@@ -36,4 +36,5 @@ export type ScreenAction =
   | { kind: "open"; tab: OpenTab; index: number }
   | { kind: "link"; url: string }
   | { kind: "copy"; text: string }
-  | { kind: "input"; phase: "down" | "drag" | "up"; row: number; col: number };
+  | { kind: "input"; phase: "down" | "drag" | "up"; row: number; col: number }
+  | { kind: "wheel"; dir: -1 | 1; row: number };
