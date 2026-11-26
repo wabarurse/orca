@@ -1,5 +1,5 @@
 import type { ContentBlock, Message, WebSearchResultBlock } from "@anthropic-ai/sdk/resources/messages";
-import type { ResponseFunctionWebSearch, ResponseOutputItem, ResponseOutputMessage } from "openai/resources/responses/responses";
+import type { ResponseFunctionWebSearch, ResponseOutputItem, ResponseOutputMessage, ResponseOutputText } from "openai/resources/responses/responses";
 import { SearchError, type SearchResult, type SearchSource } from "./web-search";
 import { fail, ok, type Result } from "../../config";
 
@@ -29,7 +29,8 @@ function claudeCalls(content: ContentBlock[]): Result<Set<string>, SearchError> 
   return ok(ids);
 }
 function claudeSource(source: WebSearchResultBlock): Sources {
-  if (source.type !== "web_search_result" || typeof source.url !== "string" || typeof source.title !== "string") return refuse("sources");
+  const kind: string = source.type;
+  if (kind !== "web_search_result" || typeof source.url !== "string" || typeof source.title !== "string") return refuse("sources");
   return ok([{ url: source.url, title: source.title }]);
 }
 function claudeCitations(block: ContentBlock): SearchSource[] {
@@ -64,32 +65,31 @@ function codexSources(item: ResponseFunctionWebSearch): Sources {
   if (item.action.type !== "search") return refuse("action");
   const listed: unknown = item.action.sources;
   if (listed !== null && listed !== undefined && !Array.isArray(listed)) return refuse("malformed");
-  return ok((item.action.sources ?? []).filter(source => source?.type === "url").map(source => ({ url: source.url })));
+  return ok((item.action.sources ?? []).filter((source: { type: string; url: string } | null | undefined) => source?.type === "url").map(source => ({ url: source.url })));
 }
 function codexCitations(item: ResponseOutputMessage): Sources {
   if (item.status !== "completed" || !Array.isArray(item.content)) return refuse("incomplete");
   return collect(item.content, part => {
     const present: unknown = part;
     if (present === null || present === undefined) return refuse("malformed");
-    if (part.type === "refusal") return refuse("refusal");
-    if (part.type !== "output_text") return refuse("malformed");
+    switch (part.type) {
+      case "refusal": return refuse("refusal");
+      case "output_text": break;
+      default: return refuse("malformed");
+    }
     const annotations: unknown = part.annotations;
     if (annotations !== null && annotations !== undefined && !Array.isArray(annotations)) return refuse("malformed");
-    return ok((part.annotations ?? []).flatMap(citation => citation?.type === "url_citation"
+    return ok((annotations === null || annotations === undefined ? [] : part.annotations).flatMap((citation: ResponseOutputText["annotations"][number] | null | undefined) => citation?.type === "url_citation"
       ? [{ url: citation.url, title: citation.title }] : []));
   });
 }
 export function codexSearchItemSources(item: ResponseOutputItem): Sources {
   const present: unknown = item;
   if (present === null || typeof present !== "object") return refuse("malformed");
-  switch (item.type) {
-    case "web_search_call": return codexSources(item);
-    case "message": return codexCitations(item);
-    case "reasoning":
-      if (item.status !== undefined && item.status !== "completed") return refuse("incomplete");
-      return ok([]);
-    default: return refuse("action");
-  }
+  if (item.type === "web_search_call") return codexSources(item);
+  if (item.type === "message") return codexCitations(item);
+  if (item.type === "reasoning") return item.status !== undefined && item.status !== "completed" ? refuse("incomplete") : ok([]);
+  return refuse("action");
 }
 export function codexSearchResults(output: ResponseOutputItem[]): Result<SearchResult, SearchError> {
   if (!Array.isArray(output)) return refuse("malformed");
