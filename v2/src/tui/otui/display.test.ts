@@ -4,7 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import type { screens } from "../components";
 import { Display } from "./display";
 
-const chat = (rows: string[]): screens.ChatScreen => ({ kind: "chat", header: null, items: [{ kind: "rows", key: "r", gap: false, rows }], tail: [], updates: 0, welcome: [], footer: ["› "], cursor: null });
+const chat = (rows: string[]): screens.ChatScreen => ({ kind: "chat", header: null, view: "a", items: [{ kind: "rows", key: "r", gap: false, rows }], tail: [], welcome: [], footer: ["› "], cursor: null });
 
 test("hovering a link underlines it, clicking it asks to open it, and a finished drag selection asks to copy", async () => {
   const setup = await createTestRenderer({ width: 60, height: 10 });
@@ -36,32 +36,119 @@ test("hovering a link underlines it, clicking it asks to open it, and a finished
   await setup.dispose();
 });
 
-test("any update to the chat brings it back to the bottom, even after scrolling up, but a spinner tick does not", async () => {
+const items = (count: number, tall = -1): screens.ScreenItem[] => Array.from({ length: count }, (_, i) => ({ kind: "rows", key: `i${i}`, gap: false, rows: i === tall ? [`line ${i}`, `extra ${i}`] : [`line ${i}`] }));
+const listed = (list: screens.ScreenItem[], view = "a"): screens.ChatScreen => ({ ...chat([]), view, items: list });
+const rowOf = (frame: string, text: string): number => frame.split("\n").findIndex(line => line.includes(text));
+
+test("at the bottom new items and the streaming tail keep the view following the bottom", async () => {
   const setup = await createTestRenderer({ width: 40, height: 10 });
   const display = new Display(setup.renderer, () => {}, () => {});
-  const rows = Array.from({ length: 30 }, (_, i) => `line ${i}`);
-  display.show(chat(rows));
+  display.show(listed(items(30)));
   await setup.renderOnce();
-  display.scroll("page-up");
-  display.scroll("page-up");
+  expect(setup.captureCharFrame()).toContain("line 29");
+  display.show(listed(items(32)));
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).not.toContain("line 29");
+  expect(setup.captureCharFrame()).toContain("line 31");
+  display.show({ ...listed(items(32)), tail: ["streaming"] });
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("streaming");
+  expect(setup.captureCharFrame()).not.toContain("below");
+  await setup.dispose();
+});
 
-  display.show(chat([...rows, "line 30"]));
+test("after scrolling up new items and streaming do not move the view, and a hint counts the rows below", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const display = new Display(setup.renderer, () => {}, () => {});
+  display.show(listed(items(30)));
+  await setup.renderOnce();
+  display.scroll("page-up");
+  display.scroll("page-up");
+  await setup.renderOnce();
+  const before = rowOf(setup.captureCharFrame(), "line 15");
+  expect(before).toBeGreaterThanOrEqual(0);
+  display.show(listed(items(31)));
+  await setup.renderOnce();
+  display.show({ ...listed(items(31)), tail: ["streaming", "more streaming"] });
+  await setup.renderOnce();
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame();
+  expect(rowOf(frame, "line 15")).toBe(before);
+  expect(frame).not.toContain("line 30");
+  expect(frame).toMatch(/↓ \d+ more lines below/);
+  await setup.dispose();
+});
+
+test("a rebuilt item above the reading point keeps the line being read in place", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const display = new Display(setup.renderer, () => {}, () => {});
+  display.show(listed(items(30)));
+  await setup.renderOnce();
+  display.scroll("page-up");
+  display.scroll("page-up");
+  await setup.renderOnce();
+  const before = rowOf(setup.captureCharFrame(), "line 15");
+  display.show(listed(items(30, 2)));
+  await setup.renderOnce();
+  await setup.renderOnce();
+  expect(rowOf(setup.captureCharFrame(), "line 15")).toBe(before);
+  await setup.dispose();
+});
+
+test("End, Page Down to the bottom and a click on the hint resume following", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const display = new Display(setup.renderer, () => {}, () => {});
+  display.show(listed(items(30)));
+  await setup.renderOnce();
+  display.scroll("page-up");
+  await setup.renderOnce();
+  display.scroll("end");
+  display.show(listed(items(31)));
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("line 30");
 
   display.scroll("page-up");
   await setup.renderOnce();
-  display.show({ ...chat([...rows, "line 30"]), tail: ["streaming"], updates: 1 });
+  display.scroll("page-down");
+  display.show(listed(items(32)));
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("streaming");
+  expect(setup.captureCharFrame()).toContain("line 31");
 
+  display.scroll("up");
+  display.scroll("up");
+  display.scroll("up");
+  await setup.renderOnce();
+  await setup.renderOnce();
+  const frame = setup.captureCharFrame();
+  const y = rowOf(frame, "below");
+  expect(y).toBeGreaterThanOrEqual(0);
+  await setup.mockMouse.click((frame.split("\n")[y] ?? "").indexOf("below"), y);
+  display.show(listed(items(33)));
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("line 32");
+  await setup.dispose();
+});
+
+test("each view keeps its own place: a new view opens at the bottom and a scrolled one comes back where it was", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const display = new Display(setup.renderer, () => {}, () => {});
+  display.show(listed(items(30), "a"));
+  await setup.renderOnce();
+  display.scroll("page-up");
   display.scroll("page-up");
   await setup.renderOnce();
-  display.show({ ...chat([...rows, "line 30"]), tail: ["streaming ⠋ 3s"], updates: 1 });
+  const before = rowOf(setup.captureCharFrame(), "line 15");
+  display.show(listed(items(40), "b"));
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).not.toContain("streaming");
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("line 39");
+  display.show(listed(items(30), "a"));
+  await setup.renderOnce();
+  await setup.renderOnce();
+  expect(rowOf(setup.captureCharFrame(), "line 15")).toBe(before);
+  display.show(listed(items(40), "b"));
+  await setup.renderOnce();
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toContain("line 39");
   await setup.dispose();
 });
 

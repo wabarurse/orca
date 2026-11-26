@@ -69,6 +69,8 @@ export function finText(cols: number, time: number, active: boolean): StyledText
 
 type Built = { item: screens.ScreenItem; node: BoxRenderable };
 
+type Place = { following: boolean; top: number };
+
 const sameRows = (a: string[], b: string[]): boolean => a === b || (a.length === b.length && a.every((row, i) => row === b[i]));
 
 function sameItem(a: screens.ScreenItem, b: screens.ScreenItem): boolean {
@@ -87,7 +89,6 @@ export class ChatView {
   private readonly fin: TextRenderable;
   private readonly body: ScrollBoxRenderable;
   private readonly tail: TextRenderable;
-  private updates = 0;
   private readonly welcome: BoxRenderable;
   private readonly welcomeArt: TextRenderable;
   private readonly footer: TextRenderable;
@@ -95,6 +96,9 @@ export class ChatView {
   private built: { key: string; item: Built }[] = [];
   private headerSig = "";
   private pressed: { x: number; y: number } | null = null;
+  private readonly hint: TextRenderable;
+  private readonly places = new Map<string, Place>();
+  private view: string | null = null;
 
   constructor(private readonly ctx: RenderContext, private readonly events: ChatEvents) {
     this.root = new BoxRenderable(ctx, { flexDirection: "column", width: "100%", height: "100%" });
@@ -121,16 +125,45 @@ export class ChatView {
     this.footer.onMouseDrag = (event: MouseEvent) => { this.footerMouse("drag", event); };
     this.footer.onMouseUp = (event: MouseEvent) => { this.footerMouse("up", event); };
     this.footer.onMouseDragEnd = (event: MouseEvent) => { this.footerMouse("up", event); };
+    this.hint = new TextRenderable(ctx, { content: "", wrapMode: "none", position: "absolute", right: 2, bottom: 1, zIndex: 10, visible: false, selectable: false });
+    this.hint.onMouseDown = (event: MouseEvent) => { this.pressed = { x: event.x, y: event.y }; };
+    this.hint.onMouseUp = (event: MouseEvent) => { this.click(event, () => { this.scroll("end"); }); };
     this.body.add(this.tail);
+    this.body.content.on("resize", () => { this.showHint(); });
+    this.body.viewport.on("resize", () => { this.showHint(); });
+    this.body.verticalScrollBar.on("change", () => { this.showHint(); });
     this.root.add(this.header);
     this.root.add(this.body);
     this.root.add(this.welcome);
     this.root.add(this.footer);
+    this.root.add(this.hint);
+  }
+
+  rowsBelow(): number {
+    return Math.max(0, this.body.scrollHeight - this.body.viewport.height - this.body.scrollTop);
+  }
+
+  following(): boolean {
+    return this.rowsBelow() === 0;
+  }
+
+  private showHint(): void {
+    const below = this.body.visible ? this.rowsBelow() : 0;
+    this.hint.visible = below > 0;
+    if (below > 0) this.hint.content = styled([chunk(` ↓ ${below} more line${below === 1 ? "" : "s"} below · PgDn `, COLOURS.ink, TextAttributes.BOLD, COLOURS.light)]);
+  }
+
+  private switchView(view: string): Place | null {
+    if (view === this.view) return null;
+    if (this.view !== null) this.places.set(this.view, { following: this.following(), top: this.body.scrollTop });
+    this.view = view;
+    return this.places.get(view) ?? { following: true, top: 0 };
   }
 
   show(screen: screens.ChatScreen, cols: number): void {
     this.showHeader(screen.header, cols);
-    this.showItems(screen.items, screen.tail, screen.updates);
+    const restore = this.switchView(screen.view);
+    this.showItems(screen.items, screen.tail, restore === null);
     const empty = screen.items.length === 0 && screen.tail.length === 0 && screen.welcome.length > 0;
     this.welcome.visible = empty;
     this.body.visible = !empty;
@@ -139,6 +172,9 @@ export class ChatView {
     this.footerHeight = Math.max(1, screen.footer.length);
     this.footer.height = this.footerHeight;
     this.body.marginBottom = this.ctx.height >= 8 ? 1 : 0;
+    this.hint.bottom = this.footerHeight + this.body.marginBottom;
+    if (restore !== null) this.body.scrollTo(restore.following ? Number.MAX_SAFE_INTEGER : restore.top);
+    this.showHint();
   }
 
   private footerMouse(phase: "down" | "drag" | "up", event: MouseEvent): void {
@@ -153,8 +189,10 @@ export class ChatView {
   scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void {
     const page = Math.max(1, this.body.height - 1);
     if (by === "home") this.body.scrollTo(0);
-    else if (by === "end") this.body.scrollTo(this.body.scrollHeight);
+    else if (by === "end") this.body.scrollTo(Number.MAX_SAFE_INTEGER);
     else this.body.scrollBy(by === "up" ? -1 : by === "down" ? 1 : by === "page-up" ? -page : page);
+    if (by !== "home" && by !== "end" && this.rowsBelow() <= 1) this.body.scrollTo(Number.MAX_SAFE_INTEGER);
+    this.showHint();
   }
 
   private showHeader(header: screens.ScreenHeader | null, cols: number): void {
@@ -187,26 +225,46 @@ export class ChatView {
     }
   }
 
-  private showItems(items: screens.ScreenItem[], tail: string[], updates: number): void {
+  private showItems(items: screens.ScreenItem[], tail: string[], hold: boolean): void {
     const next: { key: string; item: Built }[] = [];
     const previous = new Map(this.built.map(entry => [entry.key, entry.item]));
+    const kept = new Set<BoxRenderable>();
     for (const item of items) {
       const old = previous.get(item.key);
-      if (old !== undefined && sameItem(old.item, item)) { next.push({ key: item.key, item: old }); previous.delete(item.key); continue; }
+      if (old !== undefined && sameItem(old.item, item)) { next.push({ key: item.key, item: old }); previous.delete(item.key); kept.add(old.node); continue; }
       next.push({ key: item.key, item: { item, node: this.build(item) } });
     }
-    for (const stale of previous.values()) stale.node.destroyRecursively();
     const same = next.length === this.built.length && next.every((entry, i) => this.built[i]?.item === entry.item);
-    if (!same) {
-      for (const child of this.body.getChildren()) if (child !== this.tail) this.body.remove(child);
-      for (const entry of next) this.body.insertBefore(entry.item.node, this.tail);
-    }
-    const changed = !same || updates !== this.updates;
+    const anchor = same || !hold || this.following() ? null : this.readingNode(kept);
+    for (const stale of previous.values()) stale.node.destroyRecursively();
+    if (!same) this.place(next.map(entry => entry.item.node), kept);
     this.built = next;
-    this.updates = updates;
     this.tail.content = styledRows(tail);
     this.tail.visible = tail.length > 0;
-    if (changed) this.body.scrollTo(Number.MAX_SAFE_INTEGER);
+    if (anchor !== null) {
+      const release = this.body.anchor(anchor);
+      this.body.afterLayout(release);
+    }
+  }
+
+  private readingNode(kept: Set<BoxRenderable>): BoxRenderable | null {
+    const top = this.body.viewport.screenY;
+    for (const entry of this.built) if (kept.has(entry.item.node) && entry.item.node.y + entry.item.node.height > top) return entry.item.node;
+    return null;
+  }
+
+  private place(nodes: BoxRenderable[], kept: Set<BoxRenderable>): void {
+    const order = this.body.getChildren().filter(child => child !== this.tail);
+    const keptOrder = nodes.filter(node => kept.has(node));
+    const inOrder = order.length === keptOrder.length && order.every((child, i) => child === keptOrder[i]);
+    if (!inOrder) for (const child of order) this.body.remove(child);
+    let after: BoxRenderable | TextRenderable = this.tail;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const node = nodes[i];
+      if (node === undefined) continue;
+      if (!inOrder || !kept.has(node)) this.body.insertBefore(node, after);
+      after = node;
+    }
   }
 
   private build(item: screens.ScreenItem): BoxRenderable {
