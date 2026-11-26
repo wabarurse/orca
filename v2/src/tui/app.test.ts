@@ -2,449 +2,516 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { main } from "../cli/main";
 import { loadConfig, saveConfig } from "../config";
-import { askUser, pendingConfirms } from "../core/confirm";
 import { ensureBubble, readBubble } from "../core/bubbles";
+import { COMMANDS, type Run } from "../core/commands";
+import { askUser, pendingConfirms } from "../core/confirm";
 import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
-import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { tempHome } from "../test/home";
-import { main } from "../cli/main";
-import { COMMANDS, type Run } from "../core/commands";
+import { EXAMPLE, runnerPlugin } from "../test/plugins";
 import { App } from "./app";
-import { selectionMarks, type Key, type screens, type Terminal } from "./components";
+import { type Key, type screens, selectionMarks, type Terminal } from "./components";
+import { pickHint, pickKey, pickRows, pickStart, type PickState } from "./pick";
+import { renderWork } from "./work";
 
-const home = tempHome("tui");
+describe("the app", () => {
+  const home = tempHome("tui");
 
-function fakeTerminal() {
-  const keys: ((key: Key) => void)[] = [];
-  const acts: ((action: screens.ScreenAction) => void)[] = [];
-  const handed: string[][] = [];
-  const state: { screen: screens.Screen | null } = { screen: null };
-  const terminal: Terminal = { cols: 100, rows: 30, write() {}, onKey: cb => { keys.push(cb); }, onResize() {}, open() {}, close() {}, eraseOnExit() {},
-    show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "", signal: () => true, answersStatus: () => false, handOver: async argv => { handed.push(argv); return 0; } };
-  const press = async (...list: Key[]): Promise<void> => { for (const key of list) { for (const cb of keys) cb(key); await Bun.sleep(20); } };
-  const type = async (text: string): Promise<void> => { await press(...[...text].map(ch => ({ name: "char", text: ch }))); };
-  const text = (): string => {
-    const s = state.screen;
-    if (s === null) return "";
-    const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
-    return s.kind === "page" ? plain(s.rows) : plain([...s.items.flatMap(i => i.kind === "fold" ? [i.title, ...i.rows] : i.rows), ...s.tail, ...s.footer]);
-  };
-  const shows = async (wanted: string, ms = 1000): Promise<string> => {
-    for (let waited = 0; waited < ms && !text().includes(wanted); waited += 20) await Bun.sleep(20);
-    return text();
-  };
-  const dismiss = async (): Promise<void> => { if ((await shows("bubble for this chat", 300)).includes("bubble for this chat")) await press({ name: "escape" }); };
-  const act = async (action: screens.ScreenAction): Promise<void> => { for (const cb of acts) cb(action); await Bun.sleep(20); };
-  return { terminal, press, type, text, shows, act, dismiss, screen: (): screens.Screen | null => state.screen };
-}
+  function fakeTerminal() {
+    const keys: ((key: Key) => void)[] = [];
+    const acts: ((action: screens.ScreenAction) => void)[] = [];
+    const handed: string[][] = [];
+    const state: { screen: screens.Screen | null } = { screen: null };
+    const terminal: Terminal = { cols: 100, rows: 30, write() {}, onKey: cb => { keys.push(cb); }, onResize() {}, open() {}, close() {}, eraseOnExit() {},
+      show: screen => { state.screen = screen; }, scroll() {}, onAction: cb => { acts.push(cb); }, selection: () => "", signal: () => true, answersStatus: () => false, handOver: async argv => { handed.push(argv); return 0; } };
+    const press = async (...list: Key[]): Promise<void> => { for (const key of list) { for (const cb of keys) cb(key); await Bun.sleep(20); } };
+    const type = async (text: string): Promise<void> => { await press(...[...text].map(ch => ({ name: "char", text: ch }))); };
+    const text = (): string => {
+      const s = state.screen;
+      if (s === null) return "";
+      const plain = (rows: string[]): string => Bun.stripANSI(rows.join("\n"));
+      return s.kind === "page" ? plain(s.rows) : plain([...s.items.flatMap(i => i.kind === "fold" ? [i.title, ...i.rows] : i.rows), ...s.tail, ...s.footer]);
+    };
+    const shows = async (wanted: string, ms = 1000): Promise<string> => {
+      for (let waited = 0; waited < ms && !text().includes(wanted); waited += 20) await Bun.sleep(20);
+      return text();
+    };
+    const dismiss = async (): Promise<void> => { if ((await shows("bubble for this chat", 300)).includes("bubble for this chat")) await press({ name: "escape" }); };
+    const act = async (action: screens.ScreenAction): Promise<void> => { for (const cb of acts) cb(action); await Bun.sleep(20); };
+    return { terminal, press, type, text, shows, act, dismiss, screen: (): screens.Screen | null => state.screen };
+  }
 
-async function app(dir: string) {
-  const t = fakeTerminal();
-  const started: string[] = [];
-  const stopped: string[] = [];
-  const exits: number[] = [];
-  const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {},
-    stopAgents: async c => { stopped.push(c); return []; }, exit: code => { exits.push(code); } });
-  await a.start();
-  await t.dismiss();
-  return { ...t, app: a, started, stopped, exits };
-}
-
-describe("tui", () => {
-  test("Enter sends input to the orchestrator, shown at once in the chat while nothing runs; Tab queues it for after the work; Esc takes the newest back", async () => {
-    await setTrust(home.path(), false);
-    const t = await app(home.path());
-    await t.type("hello");
-    await t.press({ name: "enter" });
-    await t.type("later");
-    await t.press({ name: "tab" });
-    const id = t.app.conversationId();
-    const queued = (await pending(id, "orchestrator")).map(i => `${i.message.delivery}:${i.message.text}`);
-    expect(queued).toEqual(["steer:hello", "steer:later"]);
-    expect(t.started.length).toBeGreaterThan(0);
-    await t.app.poll();
-    expect(t.text()).not.toContain("queued");
-    const screen = t.screen();
-    expect(screen?.kind === "chat" ? screen.items.filter(item => item.kind === "user").map(item => item.rows.join(" ")) : []).toEqual(["hello", "later"]);
-    await t.press({ name: "escape" });
-    expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["hello"]);
-    expect(t.text()).toContain("› later");
-    t.app.stop();
-  });
-
-  test("a new folder opens without a trust question; a plugin tab, its count and its command work", async () => {
-    registerBuiltins([EXAMPLE]);
-    await saveConfig({ plugins: ["example"] });
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
+  async function app(dir: string) {
     const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
+    const started: string[] = [];
+    const stopped: string[] = [];
+    const exits: number[] = [];
+    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async c => { started.push(c); return { ok: true, data: 0 }; }, clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {},
+      stopAgents: async c => { stopped.push(c); return []; }, exit: code => { exits.push(code); } });
     await a.start();
     await t.dismiss();
-    expect(t.text()).not.toContain("Trust ");
-    await t.type("/pin buy milk");
-    await t.press({ name: "enter" });
-    await a.refresh();
-    expect(t.text()).toContain("1 pin");
-    await t.press({ name: "a", ctrl: true });
-    expect(t.text()).toContain("[Agents]");
-    await t.press({ name: "tab" });
-    expect(t.text()).toContain("[Pins]");
-    expect(t.text()).toContain("buy milk");
-    a.stop();
-  });
+    return { ...t, app: a, started, stopped, exits };
+  }
 
-  test("/effort and /fast open v1's menus: the current choice marked and selected, Enter saves it for the chat and the header shows it", async () => {
-    await saveConfig({ model: "claude-opus-5-5" });
-    const t = await app(home.path());
-    await t.type("/effort");
-    await t.press({ name: "enter" });
-    const menu = await t.shows("effort for claude-opus-5-5");
-    expect(menu).toContain("↑↓ enter   esc cancels");
-    expect(menu).toMatch(/❯ ● default/);
-    await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
-    await t.shows("effort for claude-opus-5-5: medium");
-    const account = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
-    expect(account()).toContain("claude-opus-5-5 · medium");
-    const id = t.app["conversation"].id;
-    expect((await readConversation(id))?.effort).toBe("medium");
-    await t.type("/effort");
-    await t.press({ name: "enter" });
-    expect(await t.shows("❯ ● medium")).toContain("❯ ● medium");
-    await t.press({ name: "escape" });
-    await t.type("/fast");
-    await t.press({ name: "enter" });
-    expect(await t.shows("❯ ● off")).toContain("fast mode for claude-opus-5-5");
-    await t.press({ name: "down" }, { name: "enter" });
-    await t.shows("fast for claude-opus-5-5: on");
-    expect(account()).toContain("claude-opus-5-5 · medium · fast");
-    expect((await readConversation(id))?.fast).toBe(true);
-    await t.type("/effort turbo");
-    await t.press({ name: "enter" });
-    expect(await t.shows("unsupported")).toContain("effort turbo is unsupported for claude-opus-5-5");
-    await saveConfig({ model: "claude-sonnet-5-5" });
-  });
-
-  test("/login offers the providers and waits for the browser sign-in, Esc cancels it; with no accounts /accounts says so", async () => {
-    const t = await app(home.path());
-    await t.type("/login");
-    await t.press({ name: "enter" });
-    expect(await t.shows("sign in   (/login")).toMatch(/❯ anthropic/);
-    await t.press({ name: "enter" });
-    const waiting = await t.shows("waiting for login");
-    expect(waiting).toContain("http://localhost:53692/login/");
-    expect(waiting).toContain("esc cancels");
-    await t.press({ name: "escape" });
-    expect(await t.shows("login cancelled")).not.toContain("waiting for login");
-    await t.type("/login gemini");
-    await t.press({ name: "enter" });
-    await t.shows("/login: usage: login anthropic|openai");
-    await t.type("/accounts");
-    await t.press({ name: "enter" });
-    expect(await t.shows("no accounts")).toContain("/accounts: no accounts; login signs in");
-  });
-
-  test("every runnable slash command and its orca2 CLI command call the same table entry with the same arguments", async () => {
-    const t = await app(home.path());
-    const id = t.app.conversationId();
-    const calls: string[] = [];
-    const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
-    for (const c of COMMANDS) if (c.run !== null) c.run = async (args, ctx) => { calls.push(`${c.name} ${args.join(",")} ${(await ctx.conversation()).ok ? "chat" : "none"}`); return { ok: true, data: `ran ${c.name}` }; };
-    const write = process.stdout.write.bind(process.stdout);
-    try {
-      for (const c of COMMANDS.filter(x => x.run !== null && x.name !== "kill")) {
-        process.stdout.write = (): boolean => true;
-        try { expect(await main([c.name, "arg", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
-        await t.type(`/${c.name} arg`);
-        await t.press({ name: "enter" });
-        await t.shows(`ran ${c.name}`);
-      }
-      process.stdout.write = (): boolean => true;
-      try { expect(await main(["kill", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
-      await t.type("/kill");
+  describe("tui", () => {
+    test("Enter sends input to the orchestrator, shown at once in the chat while nothing runs; Tab queues it for after the work; Esc takes the newest back", async () => {
+      await setTrust(home.path(), false);
+      const t = await app(home.path());
+      await t.type("hello");
       await t.press({ name: "enter" });
-      await Bun.sleep(100);
-    } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
-    const runnable = COMMANDS.filter(c => c.run !== null && c.name !== "kill").map(c => c.name);
-    expect(calls).toEqual([...runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]), "kill  chat", "kill  chat"]);
-    expect(t.app["quitting"]).toBe(true);
+      await t.type("later");
+      await t.press({ name: "tab" });
+      const id = t.app.conversationId();
+      const queued = (await pending(id, "orchestrator")).map(i => `${i.message.delivery}:${i.message.text}`);
+      expect(queued).toEqual(["steer:hello", "steer:later"]);
+      expect(t.started.length).toBeGreaterThan(0);
+      await t.app.poll();
+      expect(t.text()).not.toContain("queued");
+      const screen = t.screen();
+      expect(screen?.kind === "chat" ? screen.items.filter(item => item.kind === "user").map(item => item.rows.join(" ")) : []).toEqual(["hello", "later"]);
+      await t.press({ name: "escape" });
+      expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["hello"]);
+      expect(t.text()).toContain("› later");
+      t.app.stop();
+    });
+
+    test("a new folder opens without a trust question; a plugin tab, its count and its command work", async () => {
+      registerBuiltins([EXAMPLE]);
+      await saveConfig({ plugins: ["example"] });
+      const dir = mkdtempSync(join(tmpdir(), "orca2-tui-folder-"));
+      const t = fakeTerminal();
+      const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
+      await a.start();
+      await t.dismiss();
+      expect(t.text()).not.toContain("Trust ");
+      await t.type("/pin buy milk");
+      await t.press({ name: "enter" });
+      await a.refresh();
+      expect(t.text()).toContain("1 pin");
+      await t.press({ name: "a", ctrl: true });
+      expect(t.text()).toContain("[Agents]");
+      await t.press({ name: "tab" });
+      expect(t.text()).toContain("[Pins]");
+      expect(t.text()).toContain("buy milk");
+      a.stop();
+    });
+
+    test("/effort and /fast open v1's menus: the current choice marked and selected, Enter saves it for the chat and the header shows it", async () => {
+      await saveConfig({ model: "claude-opus-5-5" });
+      const t = await app(home.path());
+      await t.type("/effort");
+      await t.press({ name: "enter" });
+      const menu = await t.shows("effort for claude-opus-5-5");
+      expect(menu).toContain("↑↓ enter   esc cancels");
+      expect(menu).toMatch(/❯ ● default/);
+      await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
+      await t.shows("effort for claude-opus-5-5: medium");
+      const account = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+      expect(account()).toContain("claude-opus-5-5 · medium");
+      const id = t.app["conversation"].id;
+      expect((await readConversation(id))?.effort).toBe("medium");
+      await t.type("/effort");
+      await t.press({ name: "enter" });
+      expect(await t.shows("❯ ● medium")).toContain("❯ ● medium");
+      await t.press({ name: "escape" });
+      await t.type("/fast");
+      await t.press({ name: "enter" });
+      expect(await t.shows("❯ ● off")).toContain("fast mode for claude-opus-5-5");
+      await t.press({ name: "down" }, { name: "enter" });
+      await t.shows("fast for claude-opus-5-5: on");
+      expect(account()).toContain("claude-opus-5-5 · medium · fast");
+      expect((await readConversation(id))?.fast).toBe(true);
+      await t.type("/effort turbo");
+      await t.press({ name: "enter" });
+      expect(await t.shows("unsupported")).toContain("effort turbo is unsupported for claude-opus-5-5");
+      await saveConfig({ model: "claude-sonnet-5-5" });
+    });
+
+    test("/login offers the providers and waits for the browser sign-in, Esc cancels it; with no accounts /accounts says so", async () => {
+      const t = await app(home.path());
+      await t.type("/login");
+      await t.press({ name: "enter" });
+      expect(await t.shows("sign in   (/login")).toMatch(/❯ anthropic/);
+      await t.press({ name: "enter" });
+      const waiting = await t.shows("waiting for login");
+      expect(waiting).toContain("http://localhost:53692/login/");
+      expect(waiting).toContain("esc cancels");
+      await t.press({ name: "escape" });
+      expect(await t.shows("login cancelled")).not.toContain("waiting for login");
+      await t.type("/login gemini");
+      await t.press({ name: "enter" });
+      await t.shows("/login: usage: login anthropic|openai");
+      await t.type("/accounts");
+      await t.press({ name: "enter" });
+      expect(await t.shows("no accounts")).toContain("/accounts: no accounts; login signs in");
+    });
+
+    test("every runnable slash command and its orca2 CLI command call the same table entry with the same arguments", async () => {
+      const t = await app(home.path());
+      const id = t.app.conversationId();
+      const calls: string[] = [];
+      const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
+      for (const c of COMMANDS) if (c.run !== null) c.run = async (args, ctx) => { calls.push(`${c.name} ${args.join(",")} ${(await ctx.conversation()).ok ? "chat" : "none"}`); return { ok: true, data: `ran ${c.name}` }; };
+      const write = process.stdout.write.bind(process.stdout);
+      try {
+        for (const c of COMMANDS.filter(x => x.run !== null && x.name !== "kill")) {
+          process.stdout.write = (): boolean => true;
+          try { expect(await main([c.name, "arg", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+          await t.type(`/${c.name} arg`);
+          await t.press({ name: "enter" });
+          await t.shows(`ran ${c.name}`);
+        }
+        process.stdout.write = (): boolean => true;
+        try { expect(await main(["kill", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+        await t.type("/kill");
+        await t.press({ name: "enter" });
+        await Bun.sleep(100);
+      } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
+      const runnable = COMMANDS.filter(c => c.run !== null && c.name !== "kill").map(c => c.name);
+      expect(calls).toEqual([...runnable.flatMap(name => [`${name} arg chat`, `${name} arg chat`]), "kill  chat", "kill  chat"]);
+      expect(t.app["quitting"]).toBe(true);
+    });
+
+    test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
+      const t = await app(home.path());
+      const id = t.app.conversationId();
+      await t.app["transcript"].append({ type: "message", inbox: [], message: { role: "assistant", content: "before the clear" } });
+      t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+      await t.app.poll();
+      expect(await t.shows("before the clear")).toContain("before the clear");
+      const write = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (): boolean => true;
+      try { expect(await main(["clear-chat", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
+      t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+      await t.app.poll();
+      await t.app.poll();
+      expect(t.text()).not.toContain("before the clear");
+      t.app.stop();
+      await Bun.sleep(5);
+      const later = await app(home.path());
+      expect(await later.shows("before the clear")).toContain("before the clear");
+      later.app.stop();
+    });
+
+    test("a model, effort or fast change made through the CLI shows in a running TUI's header on its next poll", async () => {
+      await saveConfig({ model: "claude-opus-5-5" });
+      const t = await app(home.path());
+      const id = t.app.conversationId();
+      const header = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
+      const write = process.stdout.write.bind(process.stdout);
+      process.stdout.write = (): boolean => true;
+      try {
+        expect(await main(["effort", "high", "--conversation", id])).toBe(0);
+        expect(await main(["fast", "on", "--conversation", id])).toBe(0);
+      } finally { process.stdout.write = write; }
+      t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
+      await t.app.poll();
+      expect(header()).toContain("claude-opus-5-5 · high · fast");
+      expect(t.app["conversation"].effort).toBe("high");
+      await saveConfig({ model: "claude-sonnet-5-5" });
+      t.app.stop();
+    });
+
+    test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
+      registerBuiltins([runnerPlugin("tmux")]);
+      await saveConfig({ plugins: ["tmux"], runner: "plain" });
+      const t = await app(home.path());
+      await t.type("/mux rex");
+      await t.press({ name: "enter" });
+      expect(await t.shows("unknown runner rex")).toContain("unknown runner rex; choose plain, tmux");
+      await t.type("/mux tmux");
+      await t.press({ name: "enter" });
+      expect((await loadConfig()).runner).toBe("tmux");
+      expect(await t.shows("new agents start in tmux")).toContain("new agents start in tmux");
+      await t.type("/mux");
+      await t.press({ name: "enter" });
+      const menu = await t.shows("runner for new agents");
+      expect(menu).toMatch(/❯ ● tmux/);
+      expect(menu).toContain("  plain");
+      await t.press({ name: "escape" });
+      await saveConfig({ plugins: [], runner: "plain" });
+      t.app.stop();
+    });
+
+    test("a plugin hook's question is shown and answered from the TUI", async () => {
+      const t = await app(home.path());
+      const id = t.app.conversationId();
+      const answer = askUser(id, "worker-x", "deploy to staging?", new AbortController().signal, 5000);
+      await Bun.sleep(50);
+      await t.app.poll();
+      expect(t.text()).toContain("worker-x asks: deploy to staging?");
+      await t.press({ name: "char", text: "y" });
+      expect(await answer).toBe(true);
+      expect(await pendingConfirms(id)).toEqual([]);
+      t.app.stop();
+    });
+
+    test("Up/Down recall earlier input (messages and commands) only from an empty composer; over typed text they only move the cursor", async () => {
+      const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-history-")));
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      const composer = (): string => t.text().split("\n").filter(line => line.includes("› ")).join("\n");
+      await t.type("one");
+      await t.press({ name: "enter" });
+      await t.type("/nope");
+      await t.press({ name: "enter" });
+      await t.press({ name: "up" });
+      expect(composer()).toContain("› /nope");
+      await t.press({ name: "up" });
+      expect(composer()).toContain("› one");
+      await t.press({ name: "down" });
+      expect(composer()).toContain("› /nope");
+      await t.press({ name: "down" });
+      expect(composer()).not.toContain("/nope");
+      expect(composer()).not.toContain("one");
+      await t.type("draft");
+      await t.press({ name: "up" });
+      expect(composer()).toContain("› draft");
+      await t.press({ name: "char", text: "!" });
+      expect(composer()).toContain("› !draft");
+      await t.press({ name: "end" }, { name: "enter", shift: true }, { name: "char", text: "x" }, { name: "up" }, { name: "char", text: "?" });
+      expect(composer()).toContain("› !?draft");
+      await t.press({ name: "down" }, { name: "down" });
+      expect(composer()).not.toContain("/nope");
+      t.app.stop();
+    });
+
+    test("Shift+Enter (or Alt+Enter) adds a new line in the composer instead of sending", async () => {
+      const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-newline-")));
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      const id = t.app.conversationId();
+      await t.type("first");
+      await t.press({ name: "enter", shift: true });
+      await t.type("second");
+      await t.press({ name: "enter", alt: true });
+      await t.type("third");
+      expect(await pending(id, "orchestrator")).toEqual([]);
+      await t.press({ name: "enter" });
+      expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
+      t.app.stop();
+    });
+
+    test("a tab action's pick shows every option on the work page with the selection highlighted; j moves it, Enter sends it, a digit picks at once, Esc cancels", async () => {
+      registerBuiltins([EXAMPLE]);
+      await saveConfig({ plugins: ["example"] });
+      const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-pick-")));
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      await t.type("/pin first");
+      await t.press({ name: "enter" });
+      await t.press({ name: "a", ctrl: true }, { name: "tab" });
+      expect(await t.shows("[Pins]")).toContain("first");
+      await t.press({ name: "char", text: "b" });
+      const shown = await t.shows("who pinned p1?");
+      expect(shown).toContain("❯ 1 ● user");
+      expect(shown).toContain("  2   agent");
+      expect(shown).toContain("1-2 picks   esc cancels");
+      const screen = t.screen();
+      expect(screen?.kind === "page" ? screen.rows.filter(r => r.includes(selectionMarks().on)).map(r => Bun.stripANSI(r)) : []).toEqual(["❯ 1 ● user"]);
+      await t.press({ name: "char", text: "j" });
+      expect(await t.shows("❯ 2   agent")).toContain("  1 ● user");
+      await t.press({ name: "enter" });
+      expect(await t.shows("p1 pinned by agent")).not.toContain("who pinned p1?");
+      await t.press({ name: "char", text: "b" });
+      expect(await t.shows("❯ 2 ● agent")).toContain("who pinned p1?");
+      await t.press({ name: "escape" });
+      expect(t.text()).not.toContain("who pinned p1?");
+      await t.press({ name: "char", text: "b" });
+      await t.shows("who pinned p1?");
+      await t.press({ name: "char", text: "1" });
+      expect(await t.shows("p1 pinned by user")).toContain("user");
+      await saveConfig({ plugins: [] });
+      t.app.stop();
+    });
+
+    test("a plugin tab archives with a (rows move under a closed Archived heading), Enter opens it, u restores, A archives all after y", async () => {
+      registerBuiltins([EXAMPLE]);
+      await saveConfig({ plugins: ["example"] });
+      const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-archive-")));
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      for (const text of ["/pin first", "/pin second"]) { await t.type(text); await t.press({ name: "enter" }); }
+      await t.press({ name: "a", ctrl: true }, { name: "tab" });
+      expect(await t.shows("[Pins]")).toContain("second");
+      await t.press({ name: "char", text: "a" });
+      expect(await t.shows("Archived (1)")).toContain("▸ Archived (1)");
+      expect(t.text()).toContain("archived first");
+      expect(t.text().split("\n").filter(line => line.includes("first") && !line.includes("archived first") && !line.startsWith("──"))).toEqual([]);
+      await t.press({ name: "down" }, { name: "enter" });
+      expect(await t.shows("▾ Archived (1)")).toContain("▾ Archived (1)");
+      await t.press({ name: "down" }, { name: "char", text: "u" });
+      expect(await t.shows("restored first")).not.toContain("Archived (");
+      await t.press({ name: "char", text: "A" });
+      expect(t.text()).toContain("archive all 2 on this tab?");
+      await t.press({ name: "char", text: "y" });
+      expect(await t.shows("Archived (2)")).toContain("▾ Archived (2)");
+      await saveConfig({ plugins: [] });
+      t.app.stop();
+    });
+
+    test("a finished selection is copied to the clipboard and a clicked link opens in the browser; only web and mail links open", async () => {
+      const copied: string[] = [], opened: string[] = [];
+      const t = fakeTerminal();
+      const a = new App({ terminal: t.terminal, directory: mkdtempSync(join(tmpdir(), "orca2-tui-copy-")), now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }),
+        clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async text => { copied.push(text); return { ok: true, data: null }; },
+        pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async url => { opened.push(url); return { ok: true, data: null }; }, open: async () => {}, stopAgents: async () => [], exit: () => {} });
+      await a.start();
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      await t.act({ kind: "copy", text: "hello there" });
+      expect(copied).toEqual(["hello there"]);
+      expect(await t.shows("copied 11 characters")).toContain("copied 11 characters");
+      await t.act({ kind: "link", url: "https://github.com/wabarurse/orca/pull/1" });
+      expect(opened).toEqual(["https://github.com/wabarurse/orca/pull/1"]);
+      await t.act({ kind: "link", url: "file:///etc/passwd" });
+      expect(opened.length).toBe(1);
+      expect(await t.shows("not opened")).toContain("not opened: file:///etc/passwd");
+      a.stop();
+    });
+
+    test("a new chat offers New bubble (created at once, named after the folder, shown in the top bar), this folder's bubbles, and No bubble (which memory cannot undo)", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "orca2-tui-newbubble-"));
+      const t = fakeTerminal();
+      const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }),
+        copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
+      await a.start();
+      expect(await t.shows("bubble for this chat")).toContain("No bubble (no shared memory)");
+      await t.press({ name: "enter" });
+      expect(t.text()).toContain(`name the new bubble: ${basename(dir)}`);
+      await t.press({ name: "enter" });
+      await Bun.sleep(50);
+      const first = await readConversation(a.conversationId());
+      const made = first === null || first.bubble === null ? null : await readBubble(first.bubble);
+      expect(made?.name).toBe(basename(dir));
+      expect(made?.directory).toBe(dir);
+      await a.refresh();
+      const header = (): string => { const screen = t.screen(); return screen?.kind === "chat" && screen.header !== null ? screen.header.bubble ?? "" : ""; };
+      expect(header()).toBe(`bubble ${basename(dir)}`);
+
+      await t.press({ name: "n", ctrl: true });
+      expect(await t.shows("bubble for the new chat")).toContain(basename(dir));
+      await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
+      await Bun.sleep(50);
+      const none = await readConversation(a.conversationId());
+      expect(none?.noBubble).toBe(true);
+      expect(none?.bubble).toBeNull();
+      await a.refresh();
+      expect(header()).toBe("no bubble");
+      const ensured = await ensureBubble(a.conversationId());
+      expect(ensured.ok ? "" : ensured.error).toContain("this chat has no bubble");
+      a.stop();
+    });
+
+    test("each open chat keeps its own draft: switching tabs saves the one and restores the other, a new tab starts empty", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "orca2-tui-drafts-"));
+      await createConversation(dir, null);
+      await createConversation(dir, null);
+      const t = await app(dir);
+      const composer = (): string => { const screen = t.screen(); return screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : ""; };
+      await t.type("first draft");
+      await t.press({ name: "left" }, { name: "l", ctrl: true });
+      expect(composer()).not.toContain("first draft");
+      await t.type("second");
+      await t.press({ name: "h", ctrl: true });
+      expect(composer()).toContain("› first draft");
+      await t.type("!");
+      expect(composer()).toContain("› first draf!t");
+      await t.press({ name: "l", ctrl: true });
+      expect(composer()).toContain("› second");
+      t.app.stop();
+    });
+
+    test("the footer counts plugins at its right; Ctrl+P lists them with their pages, Enter opens one, t turns it off for the bubble", async () => {
+      registerBuiltins([EXAMPLE]);
+      await saveConfig({ plugins: ["example"] });
+      const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-plugins-")));
+      await Bun.sleep(50);
+      await t.press({ name: "escape" });
+      await t.app.refresh();
+      const screen = t.screen();
+      const footer = screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : "";
+      expect(footer).toMatch(/0 agents.* 1 plugin · Ctrl\+P │/);
+      await t.press({ name: "p", ctrl: true });
+      expect(await t.shows("[Plugins]")).toContain("example");
+      expect(t.text()).toMatch(/example\s+on\s+Pins/);
+      await t.press({ name: "enter" });
+      expect(await t.shows("[Pins]")).toContain("[Pins]");
+      await t.press({ name: "escape" }, { name: "p", ctrl: true });
+      await t.press({ name: "char", text: "t" });
+      expect(await t.shows("example off for this bubble")).toMatch(/example\s+off/);
+      await t.press({ name: "escape" });
+      const after = t.screen();
+      expect(after?.kind === "chat" ? Bun.stripANSI(after.footer.join("\n")) : "").toContain("0 plugins · Ctrl+P");
+      await saveConfig({ plugins: [] });
+      t.app.stop();
+    });
   });
+});
 
-  test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
-    const t = await app(home.path());
-    const id = t.app.conversationId();
-    await t.app["transcript"].append({ type: "message", inbox: [], message: { role: "assistant", content: "before the clear" } });
-    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
-    await t.app.poll();
-    expect(await t.shows("before the clear")).toContain("before the clear");
-    const write = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (): boolean => true;
-    try { expect(await main(["clear-chat", "--conversation", id])).toBe(0); } finally { process.stdout.write = write; }
-    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
-    await t.app.poll();
-    await t.app.poll();
-    expect(t.text()).not.toContain("before the clear");
-    t.app.stop();
-    await Bun.sleep(5);
-    const later = await app(home.path());
-    expect(await later.shows("before the clear")).toContain("before the clear");
-    later.app.stop();
-  });
+describe("the picker", () => {
+  const plain = (rows: string[]): string[] => rows.map(r => Bun.stripANSI(r));
+  const char = (text: string) => ({ name: "char", text });
+  const moved = (state: PickState, ...keys: { name: string; text?: string }[]): PickState => keys.reduce((s, key) => {
+    const step = pickKey(s, key);
+    return step.kind === "move" ? step.state : s;
+  }, state);
 
-  test("a model, effort or fast change made through the CLI shows in a running TUI's header on its next poll", async () => {
-    await saveConfig({ model: "claude-opus-5-5" });
-    const t = await app(home.path());
-    const id = t.app.conversationId();
-    const header = (): string => { const s = t.screen(); return s !== null && s.kind === "chat" ? s.header?.account ?? "" : ""; };
-    const write = process.stdout.write.bind(process.stdout);
-    process.stdout.write = (): boolean => true;
-    try {
-      expect(await main(["effort", "high", "--conversation", id])).toBe(0);
-      expect(await main(["fast", "on", "--conversation", id])).toBe(0);
-    } finally { process.stdout.write = write; }
-    t.app["lastSlow"] = Number.NEGATIVE_INFINITY;
-    await t.app.poll();
-    expect(header()).toContain("claude-opus-5-5 · high · fast");
-    expect(t.app["conversation"].effort).toBe("high");
-    await saveConfig({ model: "claude-sonnet-5-5" });
-    t.app.stop();
-  });
+  describe("pick", () => {
+    test("every option is drawn; the highlighted one carries ❯ and the selection colour, the current one ●, digits number them", () => {
+      const state = pickStart("which db?", ["postgres", "sqlite", "Other…", "skip"], { current: 1, digits: true });
+      expect(state.index).toBe(1);
+      const rows = pickRows(state, 60, 10);
+      expect(plain(rows)).toEqual(["  1   postgres", "❯ 2 ● sqlite", "  3   Other…", "  4   skip"]);
+      const on = selectionMarks().on;
+      expect(rows[1]).toContain(on);
+      expect(rows.filter(r => r.includes(on)).length).toBe(1);
+      expect(pickHint(state)).toBe("which db?   ↑↓ enter · 1-4 picks   esc cancels");
+    });
 
-  test("/mux is a core command: it offers plain and the enabled runner plugins and saves runner", async () => {
-    registerBuiltins([runnerPlugin("tmux")]);
-    await saveConfig({ plugins: ["tmux"], runner: "plain" });
-    const t = await app(home.path());
-    await t.type("/mux rex");
-    await t.press({ name: "enter" });
-    expect(await t.shows("unknown runner rex")).toContain("unknown runner rex; choose plain, tmux");
-    await t.type("/mux tmux");
-    await t.press({ name: "enter" });
-    expect((await loadConfig()).runner).toBe("tmux");
-    expect(await t.shows("new agents start in tmux")).toContain("new agents start in tmux");
-    await t.type("/mux");
-    await t.press({ name: "enter" });
-    const menu = await t.shows("runner for new agents");
-    expect(menu).toMatch(/❯ ● tmux/);
-    expect(menu).toContain("  plain");
-    await t.press({ name: "escape" });
-    await saveConfig({ plugins: [], runner: "plain" });
-    t.app.stop();
-  });
+    test("without options it starts on the first, with no ● and no digits; an out-of-range current is ignored", () => {
+      expect(plain(pickRows(pickStart("t", ["a", "b"], undefined), 40, 10))).toEqual(["❯ a", "  b"]);
+      expect(pickStart("t", ["a", "b"], { current: 5 }).current).toBeNull();
+    });
 
-  test("a plugin hook's question is shown and answered from the TUI", async () => {
-    const t = await app(home.path());
-    const id = t.app.conversationId();
-    const answer = askUser(id, "worker-x", "deploy to staging?", new AbortController().signal, 5000);
-    await Bun.sleep(50);
-    await t.app.poll();
-    expect(t.text()).toContain("worker-x asks: deploy to staging?");
-    await t.press({ name: "char", text: "y" });
-    expect(await answer).toBe(true);
-    expect(await pendingConfirms(id)).toEqual([]);
-    t.app.stop();
-  });
+    test("j/k and arrows move within bounds; Enter sends the highlighted index, Esc null, a digit picks at once only when allowed", () => {
+      const start = pickStart("t", ["a", "b", "c"], { current: 0, digits: true });
+      expect(moved(start, char("j"), { name: "down" }, char("j")).index).toBe(2);
+      expect(moved(start, char("j"), char("k"), { name: "up" }).index).toBe(0);
+      expect(pickKey(moved(start, char("j")), { name: "enter" })).toEqual({ kind: "done", index: 1 });
+      expect(pickKey(start, { name: "escape" })).toEqual({ kind: "done", index: null });
+      expect(pickKey(start, char("3"))).toEqual({ kind: "done", index: 2 });
+      expect(pickKey(start, char("4"))).toEqual({ kind: "ignored" });
+      expect(pickKey({ ...start, digits: false }, char("2"))).toEqual({ kind: "ignored" });
+    });
 
-  test("Up/Down recall earlier input (messages and commands) only from an empty composer; over typed text they only move the cursor", async () => {
-    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-history-")));
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    const composer = (): string => t.text().split("\n").filter(line => line.includes("› ")).join("\n");
-    await t.type("one");
-    await t.press({ name: "enter" });
-    await t.type("/nope");
-    await t.press({ name: "enter" });
-    await t.press({ name: "up" });
-    expect(composer()).toContain("› /nope");
-    await t.press({ name: "up" });
-    expect(composer()).toContain("› one");
-    await t.press({ name: "down" });
-    expect(composer()).toContain("› /nope");
-    await t.press({ name: "down" });
-    expect(composer()).not.toContain("/nope");
-    expect(composer()).not.toContain("one");
-    await t.type("draft");
-    await t.press({ name: "up" });
-    expect(composer()).toContain("› draft");
-    await t.press({ name: "char", text: "!" });
-    expect(composer()).toContain("› !draft");
-    await t.press({ name: "end" }, { name: "enter", shift: true }, { name: "char", text: "x" }, { name: "up" }, { name: "char", text: "?" });
-    expect(composer()).toContain("› !?draft");
-    await t.press({ name: "down" }, { name: "down" });
-    expect(composer()).not.toContain("/nope");
-    t.app.stop();
-  });
+    test("a long list scrolls to keep the highlighted row and says where it is", () => {
+      const state = moved(pickStart("t", Array.from({ length: 12 }, (_, i) => `o${i}`), undefined), ...Array.from({ length: 9 }, () => char("j")));
+      const rows = plain(pickRows(state, 40, 5));
+      expect(rows).toEqual(["  o6", "  o7", "  o8", "❯ o9", "10 of 12"]);
+    });
 
-  test("Shift+Enter (or Alt+Enter) adds a new line in the composer instead of sending", async () => {
-    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-newline-")));
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    const id = t.app.conversationId();
-    await t.type("first");
-    await t.press({ name: "enter", shift: true });
-    await t.type("second");
-    await t.press({ name: "enter", alt: true });
-    await t.type("third");
-    expect(await pending(id, "orchestrator")).toEqual([]);
-    await t.press({ name: "enter" });
-    expect((await pending(id, "orchestrator")).map(i => i.message.text)).toEqual(["first\nsecond\nthird"]);
-    t.app.stop();
-  });
+    test("the work page shows the picker in its detail pane in place of the details", () => {
+      const pick = pickStart("answer q-1: which db?", ["postgres", "sqlite"], { current: 1, digits: true });
+      const rows = plain(renderWork({ tabs: [{ id: "questions", title: "Questions", count: 1 }], active: 0, rows: [{ id: "q-1", name: "which db?", status: "open", info: "", tone: "normal" }],
+        index: 0, pick, details: [{ title: "Question", lines: ["hidden while picking"] }], detailTop: 0, status: pickHint(pick), error: null }, 70, 16));
+      const at = rows.findIndex(r => r === "answer q-1: which db?");
+      expect(at).toBeGreaterThan(0);
+      expect(rows.slice(at + 1, at + 3)).toEqual(["  1   postgres", "❯ 2 ● sqlite"]);
+      expect(rows.join("\n")).not.toContain("hidden while picking");
+      expect(rows.at(-1)).toBe("answer q-1: which db?   ↑↓ enter · 1-2 picks   esc cancels");
+    });
 
-  test("a tab action's pick shows every option on the work page with the selection highlighted; j moves it, Enter sends it, a digit picks at once, Esc cancels", async () => {
-    registerBuiltins([EXAMPLE]);
-    await saveConfig({ plugins: ["example"] });
-    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-pick-")));
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    await t.type("/pin first");
-    await t.press({ name: "enter" });
-    await t.press({ name: "a", ctrl: true }, { name: "tab" });
-    expect(await t.shows("[Pins]")).toContain("first");
-    await t.press({ name: "char", text: "b" });
-    const shown = await t.shows("who pinned p1?");
-    expect(shown).toContain("❯ 1 ● user");
-    expect(shown).toContain("  2   agent");
-    expect(shown).toContain("1-2 picks   esc cancels");
-    const screen = t.screen();
-    expect(screen?.kind === "page" ? screen.rows.filter(r => r.includes(selectionMarks().on)).map(r => Bun.stripANSI(r)) : []).toEqual(["❯ 1 ● user"]);
-    await t.press({ name: "char", text: "j" });
-    expect(await t.shows("❯ 2   agent")).toContain("  1 ● user");
-    await t.press({ name: "enter" });
-    expect(await t.shows("p1 pinned by agent")).not.toContain("who pinned p1?");
-    await t.press({ name: "char", text: "b" });
-    expect(await t.shows("❯ 2 ● agent")).toContain("who pinned p1?");
-    await t.press({ name: "escape" });
-    expect(t.text()).not.toContain("who pinned p1?");
-    await t.press({ name: "char", text: "b" });
-    await t.shows("who pinned p1?");
-    await t.press({ name: "char", text: "1" });
-    expect(await t.shows("p1 pinned by user")).toContain("user");
-    await saveConfig({ plugins: [] });
-    t.app.stop();
-  });
-
-  test("a plugin tab archives with a (rows move under a closed Archived heading), Enter opens it, u restores, A archives all after y", async () => {
-    registerBuiltins([EXAMPLE]);
-    await saveConfig({ plugins: ["example"] });
-    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-archive-")));
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    for (const text of ["/pin first", "/pin second"]) { await t.type(text); await t.press({ name: "enter" }); }
-    await t.press({ name: "a", ctrl: true }, { name: "tab" });
-    expect(await t.shows("[Pins]")).toContain("second");
-    await t.press({ name: "char", text: "a" });
-    expect(await t.shows("Archived (1)")).toContain("▸ Archived (1)");
-    expect(t.text()).toContain("archived first");
-    expect(t.text().split("\n").filter(line => line.includes("first") && !line.includes("archived first") && !line.startsWith("──"))).toEqual([]);
-    await t.press({ name: "down" }, { name: "enter" });
-    expect(await t.shows("▾ Archived (1)")).toContain("▾ Archived (1)");
-    await t.press({ name: "down" }, { name: "char", text: "u" });
-    expect(await t.shows("restored first")).not.toContain("Archived (");
-    await t.press({ name: "char", text: "A" });
-    expect(t.text()).toContain("archive all 2 on this tab?");
-    await t.press({ name: "char", text: "y" });
-    expect(await t.shows("Archived (2)")).toContain("▾ Archived (2)");
-    await saveConfig({ plugins: [] });
-    t.app.stop();
-  });
-
-  test("a finished selection is copied to the clipboard and a clicked link opens in the browser; only web and mail links open", async () => {
-    const copied: string[] = [], opened: string[] = [];
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: mkdtempSync(join(tmpdir(), "orca2-tui-copy-")), now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }),
-      clipboard: async () => ({ ok: false, error: "clipboard is empty." }), copy: async text => { copied.push(text); return { ok: true, data: null }; },
-      pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async url => { opened.push(url); return { ok: true, data: null }; }, open: async () => {}, stopAgents: async () => [], exit: () => {} });
-    await a.start();
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    await t.act({ kind: "copy", text: "hello there" });
-    expect(copied).toEqual(["hello there"]);
-    expect(await t.shows("copied 11 characters")).toContain("copied 11 characters");
-    await t.act({ kind: "link", url: "https://github.com/wabarurse/orca/pull/1" });
-    expect(opened).toEqual(["https://github.com/wabarurse/orca/pull/1"]);
-    await t.act({ kind: "link", url: "file:///etc/passwd" });
-    expect(opened.length).toBe(1);
-    expect(await t.shows("not opened")).toContain("not opened: file:///etc/passwd");
-    a.stop();
-  });
-
-  test("a new chat offers New bubble (created at once, named after the folder, shown in the top bar), this folder's bubbles, and No bubble (which memory cannot undo)", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-newbubble-"));
-    const t = fakeTerminal();
-    const a = new App({ terminal: t.terminal, directory: dir, now: () => 0, ensureDaemon: async () => ({ ok: true, data: 0 }), clipboard: async () => ({ ok: false, error: "clipboard is empty." }),
-      copy: async () => ({ ok: true, data: null }), pasteText: async () => ({ ok: false, error: "clipboard is empty." }), openUrl: async () => ({ ok: true, data: null }), open: async () => {}, stopAgents: async () => [], exit: () => {} });
-    await a.start();
-    expect(await t.shows("bubble for this chat")).toContain("No bubble (no shared memory)");
-    await t.press({ name: "enter" });
-    expect(t.text()).toContain(`name the new bubble: ${basename(dir)}`);
-    await t.press({ name: "enter" });
-    await Bun.sleep(50);
-    const first = await readConversation(a.conversationId());
-    const made = first === null || first.bubble === null ? null : await readBubble(first.bubble);
-    expect(made?.name).toBe(basename(dir));
-    expect(made?.directory).toBe(dir);
-    await a.refresh();
-    const header = (): string => { const screen = t.screen(); return screen?.kind === "chat" && screen.header !== null ? screen.header.bubble ?? "" : ""; };
-    expect(header()).toBe(`bubble ${basename(dir)}`);
-
-    await t.press({ name: "n", ctrl: true });
-    expect(await t.shows("bubble for the new chat")).toContain(basename(dir));
-    await t.press({ name: "down" }, { name: "down" }, { name: "enter" });
-    await Bun.sleep(50);
-    const none = await readConversation(a.conversationId());
-    expect(none?.noBubble).toBe(true);
-    expect(none?.bubble).toBeNull();
-    await a.refresh();
-    expect(header()).toBe("no bubble");
-    const ensured = await ensureBubble(a.conversationId());
-    expect(ensured.ok ? "" : ensured.error).toContain("this chat has no bubble");
-    a.stop();
-  });
-
-  test("each open chat keeps its own draft: switching tabs saves the one and restores the other, a new tab starts empty", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "orca2-tui-drafts-"));
-    await createConversation(dir, null);
-    await createConversation(dir, null);
-    const t = await app(dir);
-    const composer = (): string => { const screen = t.screen(); return screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : ""; };
-    await t.type("first draft");
-    await t.press({ name: "left" }, { name: "l", ctrl: true });
-    expect(composer()).not.toContain("first draft");
-    await t.type("second");
-    await t.press({ name: "h", ctrl: true });
-    expect(composer()).toContain("› first draft");
-    await t.type("!");
-    expect(composer()).toContain("› first draf!t");
-    await t.press({ name: "l", ctrl: true });
-    expect(composer()).toContain("› second");
-    t.app.stop();
-  });
-
-  test("the footer counts plugins at its right; Ctrl+P lists them with their pages, Enter opens one, t turns it off for the bubble", async () => {
-    registerBuiltins([EXAMPLE]);
-    await saveConfig({ plugins: ["example"] });
-    const t = await app(mkdtempSync(join(tmpdir(), "orca2-tui-plugins-")));
-    await Bun.sleep(50);
-    await t.press({ name: "escape" });
-    await t.app.refresh();
-    const screen = t.screen();
-    const footer = screen?.kind === "chat" ? Bun.stripANSI(screen.footer.join("\n")) : "";
-    expect(footer).toMatch(/0 agents.* 1 plugin · Ctrl\+P │/);
-    await t.press({ name: "p", ctrl: true });
-    expect(await t.shows("[Plugins]")).toContain("example");
-    expect(t.text()).toMatch(/example\s+on\s+Pins/);
-    await t.press({ name: "enter" });
-    expect(await t.shows("[Pins]")).toContain("[Pins]");
-    await t.press({ name: "escape" }, { name: "p", ctrl: true });
-    await t.press({ name: "char", text: "t" });
-    expect(await t.shows("example off for this bubble")).toMatch(/example\s+off/);
-    await t.press({ name: "escape" });
-    const after = t.screen();
-    expect(after?.kind === "chat" ? Bun.stripANSI(after.footer.join("\n")) : "").toContain("0 plugins · Ctrl+P");
-    await saveConfig({ plugins: [] });
-    t.app.stop();
+    test("a long title wraps over up to three rows above the options, which stay visible", () => {
+      const pick = pickStart(`${"word ".repeat(40)}end?`, ["yes", "no"], undefined);
+      const rows = plain(renderWork({ tabs: [], active: 0, rows: [], index: 0, pick, details: [], detailTop: 0, status: "", error: null }, 40, 16));
+      const at = rows.findIndex(r => r.startsWith("❯ yes"));
+      expect(rows.slice(at - 3, at).every(r => r.startsWith("word"))).toBe(true);
+      expect(rows[at + 1]).toBe("  no");
+    });
   });
 });
