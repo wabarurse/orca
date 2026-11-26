@@ -128,3 +128,16 @@ test("Up on the first row or Down on the last moves to the start or end when onV
   expect(input.state.cursor).toBe(0);
   expect(input.value).toBe("one\ntwo");
 });
+
+test("the wheel scrolls hidden rows without moving the cursor; the next edit follows the cursor again", async () => {
+  const input = new TextInput();
+  await press(input, { name: "paste", text: "1\n2\n3\n4\n5" });
+  expect(input.render(20, 3)).toMatchObject({ rows: ["3", "4", "5"], above: true, below: false });
+  expect(input.scroll(1)).toBe(false);
+  expect(input.scroll(-1) && input.scroll(-1)).toBe(true);
+  expect(input.scroll(-1)).toBe(false);
+  expect(input.render(20, 3)).toMatchObject({ rows: ["1", "2", "3"], above: false, below: true, cursor: false });
+  expect(input.state.cursor).toBe(9);
+  await typing(input, "6");
+  expect(input.render(20, 3)).toMatchObject({ rows: ["3", "4", "56"], cursor: true });
+});

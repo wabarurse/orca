@@ -120,6 +120,10 @@ export class ChatView {
     this.footer.onMouseDrag = (event: MouseEvent) => { this.footerMouse("drag", event); };
     this.footer.onMouseUp = (event: MouseEvent) => { this.footerMouse("up", event); };
     this.footer.onMouseDragEnd = (event: MouseEvent) => { this.footerMouse("up", event); };
+    this.footer.onMouseScroll = (event: MouseEvent) => {
+      const direction = event.scroll?.direction;
+      if (direction === "up" || direction === "down") this.events.action({ kind: "wheel", dir: direction === "up" ? -1 : 1, row: event.y - this.footer.y });
+    };
     this.body.add(this.tail);
     this.root.add(this.header);
     this.root.add(this.body);

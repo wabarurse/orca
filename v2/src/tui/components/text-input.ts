@@ -17,7 +17,7 @@ export type TextInputProps = {
   onNote: ((text: string, error: boolean) => void) | null;
 };
 
-export type InputRows = { rows: string[]; row: number; col: number; cursor: boolean };
+export type InputRows = { rows: string[]; row: number; col: number; cursor: boolean; above: boolean; below: boolean };
 export type MousePhase = "down" | "drag" | "up";
 
 export const DOUBLE_CLICK_MS = 400;
@@ -39,6 +39,8 @@ export class TextInput {
   private undoStack: history.Undo = history.empty();
   private focused: boolean;
   private top = 0;
+  private pinned = false;
+  private shown = 1;
   private width = 1;
   private goal: number | null = null;
   private click: Click | null = null;
@@ -64,6 +66,7 @@ export class TextInput {
 
   async key(key: Key): Promise<boolean> {
     if (!this.focused) return false;
+    this.pinned = false;
     const mod = key.cmd === true || key.ctrl === true;
     if (mod && key.name === "z") { this.history(key.shift === true ? "redo" : "undo"); return true; }
     if (key.ctrl === true && key.name === "y") { this.history("redo"); return true; }
@@ -78,7 +81,17 @@ export class TextInput {
     return true;
   }
 
+  scroll(dir: -1 | 1): boolean {
+    const total = editor.layout(this.s, this.width).rows.length;
+    const top = Math.max(0, Math.min(this.top + dir, total - this.shown));
+    if (top === this.top) return false;
+    this.top = top;
+    this.pinned = true;
+    return true;
+  }
+
   mouse(phase: MousePhase, row: number, col: number, now: number): void {
+    this.pinned = false;
     const offset = editor.hit(this.s, this.width, this.top + row, col);
     if (phase === "up") { this.drag = null; return; }
     if (phase === "drag") {
@@ -101,18 +114,21 @@ export class TextInput {
     this.width = Math.max(1, width);
     const lay = editor.layout(this.s, this.width);
     const shown = Math.max(1, Math.min(lay.rows.length, maxRows));
-    this.top = editor.scrollWindow(this.top, lay.row, lay.rows.length, shown);
+    this.shown = shown;
+    this.top = this.pinned ? Math.max(0, Math.min(this.top, lay.rows.length - shown)) : editor.scrollWindow(this.top, lay.row, lay.rows.length, shown);
     if (this.s.text.length === 0 && this.props.placeholder.length > 0) {
-      return { rows: [dim(sanitize(this.props.placeholder))], row: 0, col: 0, cursor: this.focused };
+      return { rows: [dim(sanitize(this.props.placeholder))], row: 0, col: 0, cursor: this.focused, above: false, below: false };
     }
     const sel = this.focused ? editor.selection(this.s) : null;
     const rows = lay.rows.slice(this.top, this.top + shown).map(r => highlighted(r, sel));
-    return { rows, row: lay.row - this.top, col: lay.col, cursor: this.focused };
+    const row = lay.row - this.top;
+    return { rows, row, col: lay.col, cursor: this.focused && row >= 0 && row < shown, above: this.top > 0, below: this.top + shown < lay.rows.length };
   }
 
   private set(state: editor.EditState, reset: boolean): void {
     const changed = state.text !== this.s.text;
     this.s = state;
+    this.pinned = false;
     this.goal = null;
     if (reset) this.undoStack = history.empty();
     if (changed && this.props.onChange !== null) this.props.onChange(state.text);

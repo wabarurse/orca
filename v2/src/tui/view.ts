@@ -168,7 +168,8 @@ export function composerRows(c: Composer, counts: string, right: string, cols: n
   const lay = c.input.render(composerWidth(c.prompt, cols), maxRows);
   const body = lay.rows.map((r, i) => {
     const text = fit((i === 0 ? prompt : " ".repeat(indent)) + r, inner);
-    return `${railMark("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))} ${railMark("│")}`;
+    const mark = i === 0 && lay.above ? dim("↑") : i === lay.rows.length - 1 && lay.below ? dim("↓") : " ";
+    return `${railMark("│")} ${text}${" ".repeat(Math.max(0, inner - visibleLength(text)))}${mark}${railMark("│")}`;
   });
   const tail = right.length > 0 && visibleLength(counts) + right.length + 3 <= inner ? right : "";
   const status = counts.length > 0 || tail.length > 0 ? fit(counts, inner - (tail.length > 0 ? tail.length + 3 : 0)) : "";
