@@ -8,12 +8,12 @@ const TRANSPORT_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPI
 const TRANSPORT_MESSAGES = /socket connection was closed|unable to connect|connection error|request timed out|fetch failed|network|operation was aborted|request was aborted|ECONNRESET|ETIMEDOUT|EPIPE/i;
 
 export type RetryOptions = {
-  signal?: AbortSignal;
-  onRetry?: (event: { reason: "http" | "transport"; attempt: number; nextRetryAt: number }) => void;
-  what?: string;
-  model?: string;
-  notice?: (text: string) => void;
-  backoffMs?: number[];
+  signal?: AbortSignal | undefined;
+  onRetry?: ((event: { reason: "http" | "transport"; attempt: number; nextRetryAt: number }) => void) | undefined;
+  what?: string | undefined;
+  model?: string | undefined;
+  notice?: ((text: string) => void) | undefined;
+  backoffMs?: number[] | undefined;
 };
 
 const withStatus = z.object({ status: z.number() });

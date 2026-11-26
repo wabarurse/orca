@@ -14,7 +14,3 @@ test("a model missing from the built-in table gets its window from the provider'
   expect(await learnCatalog("claude-new-9", catalog(async () => { asked++; return []; }), true)).toBe(false);
   expect(asked).toBe(1);
 });
-
-test("Fable 5.2 is known to have a 1M window without asking", () => {
-  expect(contextWindow({}, "claude-fable-5-2")).toEqual({ limit: 1000000, estimated: false });
-});

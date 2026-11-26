@@ -4,10 +4,10 @@ import { saveViewer, viewerHere } from "../core/viewer";
 import { errorMessage, fail, loadConfig, ok, paths, type Result } from "../config";
 import { contextWindow } from "../api/model";
 import { answerConfirm, pendingConfirms, type Confirm } from "../core/confirm";
-import { createConversation, listConversations, readConversation, saveConversation, type Conversation } from "../core/conversations";
+import { createConversation, listConversations, readConversation, type Conversation } from "../core/conversations";
 import { daemonPid, readStatus, type DaemonStatus } from "../core/daemon/channel";
 import { removeConversation } from "../core/lifecycle";
-import { cancel, ensureDaemon, say, unsay } from "../core/daemon/client";
+import { ensureDaemon, say, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
 import { COMMANDS, command as coreCommand, readViewClear, type CommandContext, type CoreCommand, type Run } from "../core/commands";
@@ -22,7 +22,7 @@ import { listRuns, live } from "../core/runner/runs";
 import { openTranscript, type Transcript } from "../core/transcript";
 import { trustState } from "../core/trust";
 import type { AgentEvent, Entry, Message, OpenSpan } from "../core/types";
-import { bold, dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
+import { dim, editor, fit, keyLog, noColour, OPENABLE, pastel, readClipboardImage, readClipboardText, type screens, TextInput, writeClipboardText, whaleRows, wordWrap, type InputClipboard, type Key, type Terminal } from "./components";
 import { bubbleChoices, bubbleDetails, bubbleEntries, bubbleRows, bubbleTarget, type BubbleChoice } from "./bubbles";
 import { archivedSection, isHeading, shelved } from "./archive";
 import { isProblem, pluginDetails, pluginRows } from "./plugins-page";
@@ -273,7 +273,7 @@ export class App {
     const id = this.conversation.id;
     const config = await loadConfig();
     const meta = await readConversation(id);
-    const bubbleName = meta?.noBubble === true ? null : meta?.bubble == null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
+    const bubbleName = meta?.noBubble === true ? null : meta === null || meta.bubble === null ? null : (await readBubble(meta.bubble))?.name ?? meta.bubble;
     const viewClear = await readViewClear(id);
     if (this.conversation.id !== id) return;
     if (viewClear !== null && viewClear.at > (this.viewClears.get(id) ?? this.openedAt)) {
@@ -772,8 +772,8 @@ export class App {
     else if (tab?.id === "plugins" && char === "t") { await this.togglePlugin(page.rows[page.index]); return; }
     else if (tab?.id === "agents" && key.name === "enter") { await this.attachAgent(page.rows[page.index]); }
     else if (tab?.id === "agents" && char === "s") { const row = page.rows[page.index]; if (row !== undefined) page.status = await stopAgent(this.conversation.id, row.id); }
-    else if (tab?.plugin != null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
-    else if (tab?.plugin != null) {
+    else if (tab !== undefined && tab.plugin !== null && (char === "a" || char === "A" || char === "u" || (key.name === "enter" && isHeading(page.rows[page.index])))) await this.shelve(tab.plugin, tab.id, page, char);
+    else if (tab !== undefined && tab.plugin !== null) {
       const def = tab.plugin.ui.tabs.find(t => t.id === tab.id);
       const pressed = key.name === "enter" ? "enter" : char;
       const action = isHeading(page.rows[page.index]) ? undefined : def?.actions.find(a => a.key === pressed);
@@ -845,7 +845,7 @@ export class App {
     if (this.page !== null) {
       const tabs = this.tabs();
       const tab = tabs[this.page.tab];
-      const actions = tab?.id === "agents" ? "enter attach · s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab?.plugin != null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
+      const actions = tab?.id === "agents" ? "enter attach · s stop" : tab?.id === "bubbles" ? "enter open a chat, or start one in the bubble · d delete a chat" : tab?.id === "plugins" ? "enter open its page · t on/off for this bubble" : [...(tab?.plugin?.ui.tabs.find(x => x.id === tab.id)?.actions.map(a => `${a.key} ${a.label}`) ?? []), ...(tab !== undefined && tab.plugin !== null ? ["a archive", "A all", "u restore"] : [])].join(" · ");
       const status = this.modal !== null ? this.modalLine(this.modal) : this.note.length > 0 ? this.note : this.page.status.length > 0 ? this.page.status
         : dim(`j/k move · tab/h/l switch · ${actions}${actions.length > 0 ? " · " : ""}r reload · esc close`);
       t.show({ kind: "page", rows: renderWork({ tabs: tabs.map(x => ({ id: x.id, title: x.title, count: x.count })), active: this.page.tab, rows: this.page.rows, index: this.page.index,
@@ -926,7 +926,7 @@ export async function startTui(directory: string): Promise<number> {
       openUrl,
       stopAgents,
       open: async path => { await Bun.spawn(process.platform === "darwin" ? ["open", path] : ["xdg-open", path], { stdout: "ignore", stderr: "ignore" }).exited; },
-      exit: code => { (terminal.released ?? Promise.resolve()).then(() => { resolve(code); }, () => { resolve(code); }); } });
+      exit: code => { terminal.released.then(() => { resolve(code); }, () => { resolve(code); }); } });
     const abandon = (error: string): void => { app.stop(); process.stderr.write(`orca2: ${error}\n`); resolve(1); };
     terminal.launched.then(launched => { if (!launched.ok) abandon(launched.error); }, (error: unknown) => { abandon(errorMessage(error)); });
     app.start().catch((error: unknown) => { abandon(errorMessage(error)); });

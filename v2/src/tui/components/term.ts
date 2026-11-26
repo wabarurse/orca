@@ -8,7 +8,7 @@ export type Terminal = {
   cols: number;
   rows: number;
   inlineImages?: boolean;
-  imageCell?: { width: number; height: number };
+  imageCell?: { width: number; height: number } | undefined;
   imageProtocol?: "kitty" | null;
   write(s: string): void;
   setTitle?(title: string): void;

@@ -324,7 +324,8 @@ export async function runPlugin(args: string[], out: Out, ask: Ask, interactive:
   for (let i = 0; i < flags.length; i++) {
     const flag = flags[i];
     if (flag === "--bubble" && action !== "update") {
-      if (flags[i + 1] !== undefined && !flags[i + 1]?.startsWith("--")) i++;
+      const next = flags[i + 1];
+      if (next !== undefined && !next.startsWith("--")) i++;
     } else if (action === "config" && (flag === "--set" || flag === "--unset")) {
       const count = flag === "--set" ? 2 : 1;
       if (

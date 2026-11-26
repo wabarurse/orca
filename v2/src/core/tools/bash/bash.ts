@@ -46,8 +46,9 @@ export const bash: Tool = {
     const env = agentEnv(ctx.conversation, ctx.agent, ctx.data);
     await mkdir(env.ORCA_ARTIFACTS ?? ctx.cwd, { recursive: true });
     const proc = Bun.spawn(["bash", "-c", `exec 2>&1\n${command}`], { cwd: ctx.cwd, env, stdout: "pipe", stdin: "ignore", detached: true });
-    let timedOut = false, limited = false;
-    const timer = setTimeout(() => { timedOut = true; killGroup(proc.pid); }, timeoutMs);
+    let limited = false;
+    const deadline = { passed: false };
+    const timer = setTimeout(() => { deadline.passed = true; killGroup(proc.pid); }, timeoutMs);
     const abort = (): void => { killGroup(proc.pid); };
     ctx.signal.addEventListener("abort", abort, { once: true });
     const chunks: Uint8Array[] = [];
@@ -71,9 +72,9 @@ export const bash: Tool = {
     const nudge = hint(command);
     if (nudge !== undefined) notes.push(nudge);
     if (limited) notes.push("[output limit reached; command terminated; saved output is incomplete]");
-    if (timedOut) notes.push(`[timed out after ${timeoutMs / 1000}s; saved output is incomplete]`);
+    if (deadline.passed) notes.push(`[timed out after ${timeoutMs / 1000}s; saved output is incomplete]`);
     const code = proc.exitCode ?? -1;
-    if (code !== 0 && !timedOut) notes.push(`[exit ${code}]`);
+    if (code !== 0 && !deadline.passed) notes.push(`[exit ${code}]`);
     let shown = output;
     if (Buffer.byteLength(output) > config.maxToolResultBytes) {
       const dir = join(paths.conversation(ctx.conversation), "tool-outputs");

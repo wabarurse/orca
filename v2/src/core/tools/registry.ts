@@ -4,7 +4,7 @@ import type { Provider } from "../../api";
 import type { RequestSettings } from "../../api/model";
 import type { Role } from "../types";
 import type { GuardRule } from "./bash/guard";
-import { type Result } from "../../config";
+import type { Result } from "../../config";
 
 export type AgentInfo = {
   agent: string;

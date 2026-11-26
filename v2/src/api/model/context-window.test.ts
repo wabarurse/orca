@@ -12,6 +12,7 @@ test("claude standard windows: documented 1M defaults, 200k where 1M is opt-in o
 
 test("context window: explicit budget, verified model, then estimated fallback", () => {
   expect(contextWindow({}, "claude-opus-5-5")).toEqual({ limit: 1000000, estimated: false });
+  expect(contextWindow({}, "claude-fable-5-2")).toEqual({ limit: 1000000, estimated: false });
   expect(contextWindow({ fallback: 5000 }, "claude-opus-5-5")).toEqual({ limit: 1000000, estimated: false });
   expect(contextWindow({ contextLimit: 6789, fallback: 5000 }, "claude-opus-5-5")).toEqual({ limit: 6789, estimated: false });
   expect(contextWindow({ fallback: 64000 }, "unknown")).toEqual({ limit: 64000, estimated: true });

@@ -1,4 +1,4 @@
-import { pluginData, readBubble, renameBubble } from "./bubbles";
+import { readBubble, renameBubble } from "./bubbles";
 import { deleteConversation, readConversation, saveConversation, type Conversation } from "./conversations";
 import { stopDaemon } from "./daemon/client";
 import { enabledNames } from "./plugins/enable";

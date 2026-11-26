@@ -5,10 +5,10 @@ import type { RequestSettings } from "./model";
 import type { SearchRequest, SearchResult } from "./search";
 
 export type Turn = {
-  usage?: { input: number; cachedInput?: number; cacheWriteInput?: number; output: number; reasoning?: number };
+  usage?: { input: number; cachedInput?: number | undefined; cacheWriteInput?: number; output: number; reasoning?: number | undefined };
   content: ContentBlock[];
   stop: "end" | "tool_use" | "limit" | "pause" | "refusal" | "error";
-  inputTokens?: number;
+  inputTokens?: number | undefined;
   completion?: string;
 };
 
@@ -16,7 +16,7 @@ export type CompleteRequest = {
   trace?: { project?: string; agent?: string; run?: string; purpose?: string };
   cacheScope?: string;
   signal?: AbortSignal;
-  settings?: RequestSettings;
+  settings?: RequestSettings | undefined;
   model: string;
   system?: string;
   messages: MessageParam[];

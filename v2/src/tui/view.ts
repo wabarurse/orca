@@ -4,7 +4,7 @@ import { RESULT_MARK, TOOL_MARK, toolView, type ToolView } from "../core/toolvie
 import { clock, phaseText } from "../core/spans";
 import type { AgentEvent, Entry, OpenSpan, ToolCall, ToolOutcome } from "../core/types";
 import { z } from "zod";
-import { dim, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, screens, shimmer, swimming, userFill, visibleLength, wordWrap, type TextInput } from "./components";
+import { dim, expandTabs, fit, pastel, railMark, renderMarkdown, sanitize, type screens, shimmer, swimming, userFill, visibleLength, wordWrap, type TextInput } from "./components";
 
 type Item = screens.ScreenItem;
 type Call = { call: ToolCall; outcome: ToolOutcome | null };
@@ -47,7 +47,7 @@ export function pieces(entries: Entry[]): Piece[] {
     }
     if (entry.inbox.length === 0 && typeof message.content === "string" && !REFERENCE.test(message.content) && !message.content.startsWith("Continue the existing request")) {
       const text = blockText(message.content);
-      if (text.length > 0 && entry.inbox.length === 0) out.push({ kind: "note", text: text.slice(0, 200) });
+      if (text.length > 0) out.push({ kind: "note", text: text.slice(0, 200) });
     }
   }
   return out;

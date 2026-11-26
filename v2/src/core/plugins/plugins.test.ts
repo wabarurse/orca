@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { noLinks } from "./testing";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ok, paths, saveConfig } from "../../config";
+import { paths, saveConfig } from "../../config";
 import { tempHome } from "../../test/home";
 import { ensureBubble, setBubblePlugin } from "../bubbles";
 import { createConversation } from "../conversations";

@@ -14,7 +14,7 @@ function lookup(nodes: Parameters<typeof searchNodes>[0], query: string): string
 export async function referenceSections(input: { conversation: string; role: Role; cwd: string; trusted: boolean; pluginSkills: string[]; query: string }): Promise<Record<string, string>> {
   const sections: Record<string, string> = {};
   const meta = await readConversation(input.conversation);
-  const bubble = meta?.bubble == null ? null : await readBubble(meta.bubble);
+  const bubble = meta === null || meta.bubble === null ? null : await readBubble(meta.bubble);
   const user = await behavior({ kind: "user" });
   const local = bubble === null ? [] : await behavior({ kind: "bubble", bubble: bubble.id });
   const line = (l: { text: string; confidence: string }): string => `- ${l.text}${l.confidence === "tentative" ? " (tentative)" : ""}`;

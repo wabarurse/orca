@@ -23,7 +23,7 @@ const chunk = (text: string, fg: string, attributes = TextAttributes.NONE, bg: s
   __isChunk: true,
   text,
   fg: RGBA.fromHex(fg),
-  bg: bg === null ? undefined : RGBA.fromHex(bg),
+  ...(bg === null ? {} : { bg: RGBA.fromHex(bg) }),
   attributes,
 });
 

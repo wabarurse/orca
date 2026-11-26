@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { anthropic } from "./anthropic";
 
 test("Claude cancellation disconnects an in-progress HTTP stream", async () => {
-  let disconnected = false;
+  const stream = { disconnected: false };
   const events = [
     { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], model: "claude-test", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
     { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
@@ -12,7 +12,7 @@ test("Claude cancellation disconnects an in-progress HTTP stream", async () => {
   const server = Bun.serve({ port: 0, fetch() {
     return new Response(new ReadableStream({ start(controller) {
       controller.enqueue(new TextEncoder().encode(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join("")));
-    }, cancel() { disconnected = true; } }), { headers: { "content-type": "text/event-stream" } });
+    }, cancel() { stream.disconnected = true; } }), { headers: { "content-type": "text/event-stream" } });
   } });
   try {
     const abort = new AbortController();
@@ -22,7 +22,7 @@ test("Claude cancellation disconnects an in-progress HTTP stream", async () => {
     });
     await expect(result).rejects.toThrow();
     const deadline = Date.now() + 2000;
-    while (!disconnected && Date.now() < deadline) await Bun.sleep(5);
-    expect(disconnected).toBe(true);
+    while (!stream.disconnected && Date.now() < deadline) await Bun.sleep(5);
+    expect(stream.disconnected).toBe(true);
   } finally { await server.stop(true); }
 });

@@ -86,18 +86,21 @@ export function toResponses(messages: MessageParam[]): CodexInputItem[] {
 }
 
 export function toResponseTools(tools: ApiTool[]): FunctionTool[] {
-  return tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description,
+  return tools.map((tool) => ({ type: "function", name: tool.name, ...(tool.description !== undefined ? { description: tool.description } : {}),
     parameters: { ...tool.input_schema }, strict: false }));
 }
 
 export function fromResponses(output: ResponseOutputItem[]): ContentBlock[] {
   const content: ContentBlock[] = [];
   for (const item of output) {
-    if ("status" in item && item.status !== undefined && item.status !== null && item.status !== "completed") throw new Error("codex returned an unfinished output item.");
+    const status: unknown = "status" in item ? item.status : undefined;
+    if (status !== undefined && status !== null && status !== "completed") throw new Error("codex returned an unfinished output item.");
     if (item.type === "message") {
       for (const part of item.content) {
-        if (part.type === "output_text") { if (part.text !== "") content.push({ type: "text", text: part.text, citations: null }); }
-        else if (part.type === "refusal") content.push({ type: "text", text: part.refusal, citations: null });
+        switch (part.type) {
+          case "output_text": if (part.text !== "") content.push({ type: "text", text: part.text, citations: null }); break;
+          case "refusal": content.push({ type: "text", text: part.refusal, citations: null }); break;
+        }
       }
     } else if (item.type === "function_call") {
       let input: unknown;
@@ -257,12 +260,16 @@ function completedEventOutput(event: Parameters<typeof finalOutput>[0], items: M
   const output = finalOutput(event, items, strict);
   if (!output.ok) return output;
   const usage = event.response.usage;
+  const reportedUsage: unknown = usage;
   const parsed = cacheUsage.safeParse(usage?.input_tokens_details);
   const details = parsed.success ? parsed.data : undefined;
   const cacheWrite = details?.cache_write_tokens;
-  if (usage !== undefined && usage !== null) onUsage?.({ input: usage.input_tokens, cachedInput: details?.cached_tokens,
-    ...(cacheWrite !== undefined && Number.isSafeInteger(cacheWrite) && cacheWrite >= 0 ? { cacheWriteInput: cacheWrite } : {}),
-    output: usage.output_tokens, reasoning: usage.output_tokens_details?.reasoning_tokens });
+  if (usage !== undefined && reportedUsage !== null) {
+    const outputDetails: unknown = usage.output_tokens_details;
+    onUsage?.({ input: usage.input_tokens, cachedInput: details?.cached_tokens,
+      ...(cacheWrite !== undefined && Number.isSafeInteger(cacheWrite) && cacheWrite >= 0 ? { cacheWriteInput: cacheWrite } : {}),
+      output: usage.output_tokens, reasoning: outputDetails === null || outputDetails === undefined ? undefined : usage.output_tokens_details.reasoning_tokens });
+  }
   return output;
 }
 function doneSequence(items: Map<number, ResponseOutputItem>): ResponseOutputItem[] | undefined {
@@ -278,13 +285,15 @@ function finalOutput(event: ResponseCompletedEvent | (Omit<ResponseCompletedEven
     const listed: unknown = event.response.output;
     if (listed !== null && listed !== undefined && !Array.isArray(listed)) return fail(new SearchError("malformed"));
     const output = event.response.output;
-    if (output !== undefined && output !== null && output.length > 0) return ok(output);
+    if (listed !== undefined && listed !== null && output.length > 0) return ok(output);
     const sequence = doneSequence(items);
     return sequence !== undefined ? ok(sequence) : fail(new SearchError("malformed"));
   }
-  if (event.response.status !== undefined && event.response.status !== null && event.response.status !== "completed") return fail(new Error("codex response did not complete successfully."));
+  const status: unknown = event.response.status;
+  if (status !== undefined && status !== null && status !== "completed") return fail(new Error("codex response did not complete successfully."));
   const output = event.response.output;
-  if (output !== undefined && output !== null && output.length > 0) return ok(output);
+  const listed: unknown = output;
+  if (listed !== undefined && listed !== null && output.length > 0) return ok(output);
   const sequence = doneSequence(items);
   return sequence !== undefined ? ok(sequence) : fail(new Error("codex returned an incomplete output item sequence; no tools executed."));
 }

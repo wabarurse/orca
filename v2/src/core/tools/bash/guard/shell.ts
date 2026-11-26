@@ -243,13 +243,13 @@ export function expandPath(word: string, env: Record<string, string | undefined>
   if (word.includes(HIDDEN)) return null;
   const home = env.HOME ?? homedir();
   let text = word === "~" ? home : word.startsWith("~/") ? home + word.slice(1) : word;
-  let unknown = false;
+  const unset = { found: false };
   text = text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_m, braced: string | undefined, bare: string | undefined) => {
     const value = env[braced ?? bare ?? ""];
-    if (value === undefined) { unknown = true; return ""; }
+    if (value === undefined) { unset.found = true; return ""; }
     return value;
   });
-  return unknown || text.includes("$") ? null : text;
+  return unset.found || text.includes("$") ? null : text;
 }
 
 function enter(cwd: string | null, target: string | undefined, env: Record<string, string | undefined>): string | null {

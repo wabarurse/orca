@@ -1,8 +1,8 @@
 import { fail, ok, type Result } from "../../config";
 import { importClaudeCode, loginClaude } from "./claude";
 import { importCodex, loginCodex } from "./codex";
-import { type LoginOptions } from "./oauth";
-import { type ProviderName } from "./accounts";
+import type { LoginOptions } from "./oauth";
+import type { ProviderName } from "./accounts";
 
 export const LOGIN_USAGE = "usage: login anthropic|openai [profile] [--import]";
 

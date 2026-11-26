@@ -103,7 +103,7 @@ export class RollingCompactor {
     await archiveTranscript(this.conversation, "orchestrator", this.transcript);
     const prior = this.transcript.branch().find(entry => entry.type === "summary");
     const carried = prior?.type === "summary" && prior.memory !== null && messages[0]?.content === prior.text;
-    const previous = carried && prior.type === "summary" ? prior.memory : null;
+    const previous = carried ? prior.memory : null;
     const abort = new AbortController();
     const job: Job = { abort, source: messages, cut, head: this.transcript.head(), memory: null, error: null, settled: false, promise: Promise.resolve() };
     let timer: ReturnType<typeof setTimeout> | undefined;

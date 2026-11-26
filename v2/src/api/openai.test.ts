@@ -28,7 +28,7 @@ async function json(req: Request): Promise<Record<string, unknown>> {
   const body: unknown = await req.json();
   return bodyShape.parse(body);
 }
-const request = (onText = (_: string) => {}): CompleteRequest => ({ model: "gpt-test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText });
+const request = (onText: (text: string) => void = () => {}): CompleteRequest => ({ model: "gpt-test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText });
 
 test("providerFor routes claude models to Claude Code and the rest to Codex", () => {
   expect(providerFor("claude-opus-5-5")).toBe("anthropic");
@@ -269,7 +269,7 @@ test("Codex terminal metadata distinguishes refusal and omitted nontext output f
   intercept(async () => codexSSE([{ type: "response.completed", response: { status: "completed", output } }]));
   const p = openai(async () => fakeCodexTokens());
   expect(await p.complete(request())).toMatchObject({ completion: "refusal", stop: "refusal" });
-  output = [message, { ...reasoning, encrypted_content: undefined }];
+  output = [message, { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "Checking the directory." }] }];
   expect((await p.complete(request())).completion).toBe("completed");
   output = [reasoning, message]; expect((await p.complete(request())).completion).toBe("completed");
   output = [message, call]; expect((await p.complete(request())).completion).toBe("nontext");
