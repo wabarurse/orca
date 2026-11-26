@@ -92,16 +92,16 @@ export type ClipboardWriter = {
 };
 export async function clipboardWriteCommand(argv: string[], text: string, timeoutMs = 5000): Promise<Result<null>> {
   const child = Bun.spawn(argv, { stdin: new Blob([text]), stdout: "ignore", stderr: "ignore" });
-  let timedOut = false;
+  const deadline = { passed: false };
   let escalation: ReturnType<typeof setTimeout> | undefined;
   const timer = setTimeout(() => {
-    timedOut = true;
+    deadline.passed = true;
     child.kill("SIGTERM");
     escalation = setTimeout(() => child.kill("SIGKILL"), 100);
   }, timeoutMs);
   try {
     const code = await child.exited;
-    if (timedOut) return fail("clipboard service timed out.");
+    if (deadline.passed) return fail("clipboard service timed out.");
     if (code !== 0) return fail("clipboard service failed.");
     return ok(null);
   } finally {

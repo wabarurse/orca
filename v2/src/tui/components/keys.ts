@@ -6,7 +6,7 @@ export type Key = {
   alt?: boolean;
   shift?: boolean;
   cmd?: boolean;
-  text?: string;
+  text?: string | undefined;
 };
 
 const CSI_FINAL = /[\x40-\x7e]/;
@@ -92,7 +92,7 @@ function partialSuffix(s: string, marker: string): number {
 export type SetTimer = (fn: () => void, ms: number) => () => void;
 const realTimer: SetTimer = (fn, ms) => {
   const t = setTimeout(fn, ms);
-  t.unref?.();
+  t.unref();
   return () => clearTimeout(t);
 };
 

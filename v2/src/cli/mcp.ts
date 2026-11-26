@@ -12,7 +12,7 @@ export const MCP_USAGE = `orca2 mcp                 list the servers in ~/.orca2
 const given = (value: string | null | undefined): value is string => typeof value === "string" && value !== "";
 
 async function describe(entry: Entry): Promise<string> {
-  const server = typeof entry.server === "object" && entry.server !== null ? entry.server : null;
+  const server = entry.server ?? null;
   const how = server === null ? "" : given(server.command) ? [server.command, ...server.args].join(" ") : server.url ?? "";
   const signed = server !== null && given(server.url) && await signedIn(server);
   const state = entry.disabled ? "disabled" : given(entry.problem) ? `not usable: ${entry.problem}` : signed ? "ready, signed in" : "ready";
