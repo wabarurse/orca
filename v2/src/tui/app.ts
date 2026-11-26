@@ -854,7 +854,7 @@ export class App {
     const header: screens.ScreenHeader = { tabs: this.openTabs.map(tab => ({ label: tab.name, active: tab.id === this.conversation.id, busy: tab.id === this.conversation.id ? this.busy : tab.busy })), bubble: this.noBubble ? "no bubble" : this.bubbleName === null ? null : `bubble ${this.bubbleName}`,
       account: this.account.length > 0 ? `${this.account} · ${this.model}${this.settings}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.map(m => userItem(m.text, `sent-${m.id}`, { cols, open: this.open }));
-    t.show({ kind: "chat", header, view: this.conversation.id, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
+    t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
       welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }
 

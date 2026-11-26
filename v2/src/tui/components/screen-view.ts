@@ -20,7 +20,6 @@ export type ScreenHeader = {
 export type ChatScreen = {
   kind: "chat";
   header: ScreenHeader | null;
-  view: string;
   items: ScreenItem[];
   tail: string[];
   welcome: string[];
