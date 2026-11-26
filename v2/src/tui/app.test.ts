@@ -5,7 +5,7 @@ import { basename, join } from "node:path";
 import { loadConfig, saveConfig } from "../config";
 import { askUser, pendingConfirms } from "../core/confirm";
 import { ensureBubble, readBubble } from "../core/bubbles";
-import { readConversation } from "../core/conversations";
+import { createConversation, readConversation } from "../core/conversations";
 import { pending } from "../core/inbox";
 import { registerBuiltins } from "../core/plugins";
 import { setTrust } from "../core/trust";
