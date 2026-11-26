@@ -77,7 +77,8 @@ export class App {
   private status: DaemonStatus | null = null;
   private busy = false;
   private waiting: OpenSpan | null = null;
-  private readonly input: TextInput;
+  private input: TextInput;
+  private drafts = new Map<string, { input: TextInput; history: Browse }>();
   private box: { top: number; box: ComposerBox } | null = null;
   private history: Browse = browsing([]);
   private cleared = new Map<string, string | null>();
@@ -114,7 +115,11 @@ export class App {
 
   constructor(private readonly deps: AppDeps) {
     this.alerts = new Alerts(deps.terminal, process.env);
-    this.input = new TextInput({ multiline: true, clipboard: this.clipboard(),
+    this.input = this.composerInput();
+  }
+
+  private composerInput(): TextInput {
+    return new TextInput({ multiline: true, clipboard: this.clipboard(),
       onSubmit: () => this.submit("steer"),
       onVertical: (dir, atEdge) => this.recall(dir, atEdge),
       onNote: (text, error) => { this.flash(text, error); } });
@@ -178,6 +183,9 @@ export class App {
 
   private async switchTo(conversation: Conversation): Promise<void> {
     await saveViewer(conversation.id, viewerHere(process.env, process.pid)).catch(() => undefined);
+    if (this.current !== null) this.drafts.set(this.current.conversation.id, { input: this.input, history: this.history });
+    const draft = this.drafts.get(conversation.id);
+    this.input = draft?.input ?? this.composerInput();
     this.lastSlow = Number.NEGATIVE_INFINITY;
     this.noBubble = conversation.noBubble;
     this.bubbleName = null;
@@ -189,7 +197,7 @@ export class App {
     this.events = [];
     this.liveTurn = -1;
     this.page = null;
-    this.history = browsing(await readInputHistory(conversation.id).catch((): string[] => []));
+    this.history = draft?.history ?? browsing(await readInputHistory(conversation.id).catch((): string[] => []));
     const loaded = await loadUis(conversation.id);
     this.uis = loaded.uis;
     this.folds = loaded.folds;
@@ -401,6 +409,15 @@ export class App {
     this.draw();
   }
 
+  private inputWheel(dir: -1 | 1, row: number): void {
+    const at = this.box;
+    const bodyRow = at === null ? -1 : row - at.top - at.box.bodyTop;
+    const target = this.modal?.kind === "input" ? this.modal.input : this.input;
+    const inside = at !== null && this.page === null && bodyRow >= 0 && bodyRow < at.box.bodyRows;
+    if (!inside || !target.scroll(dir)) this.deps.terminal.scroll(dir === -1 ? "up" : "down");
+    this.draw();
+  }
+
   private async remember(text: string): Promise<void> {
     const id = this.conversation.id;
     this.history = browsing(remember(this.history.entries, text));
@@ -534,6 +551,7 @@ export class App {
       await this.switchTo(other ?? await createConversation(this.deps.directory, null));
       this.page = page;
     }
+    this.drafts.delete(meta.id);
     this.flash(`deleted ${meta.name}${notes.length > 0 ? ` (${notes.join("; ")})` : ""}`);
   }
 
@@ -663,6 +681,8 @@ export class App {
       if (tab !== -1) this.openPage(tab).catch((error: unknown) => { this.failed(error); });
     } else if (action.kind === "input") {
       this.inputMouse(action.phase, action.row, action.col);
+    } else if (action.kind === "wheel") {
+      this.inputWheel(action.dir, action.row);
     } else if (action.kind === "copy") {
       const text = action.text;
       this.copyText(text).then(done => { this.flash(done.ok ? `copied ${text.length} character${text.length === 1 ? "" : "s"}` : `copy failed: ${done.error}`, !done.ok); },
