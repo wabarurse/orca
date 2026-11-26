@@ -23,13 +23,13 @@ const StringMap = z.record(z.string(), z.string());
 const StringList = z.array(z.string());
 
 function expand(text: string, where: string): Result<string> {
-  let missing: string | null = null;
+  const unset: { first: string | null } = { first: null };
   const out = text.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name: string) => {
     const value = process.env[name];
-    if (value === undefined) { missing ??= name; return whole; }
+    if (value === undefined) { unset.first ??= name; return whole; }
     return value;
   });
-  return missing === null ? ok(out) : fail(`${where} uses \${${missing}}, which is not set in the environment orca2 was started from`);
+  return unset.first === null ? ok(out) : fail(`${where} uses \${${unset.first}}, which is not set in the environment orca2 was started from`);
 }
 function expandAll(values: Record<string, string>, where: string): Result<Record<string, string>> {
   const out: Record<string, string> = {};

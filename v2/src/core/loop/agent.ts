@@ -12,7 +12,7 @@ import { cut, flushSpans, type Spans } from "../spans";
 import { toolArgs } from "../toolview";
 import { closeInterrupted, type Transcript } from "../transcript";
 import type { AgentEvent, Message, Role, ToolCall } from "../types";
-import { type Window } from "./budget";
+import type { Window } from "./budget";
 import { compact, type Compactor } from "./compaction";
 import { appendContext } from "./context";
 import { afterTool, beforeRequest, beforeTool, onInput, type LoopHooks } from "./hooks";

@@ -2,7 +2,6 @@ import { watch, type FSWatcher } from "node:fs";
 import { archiveDue } from "../retention";
 import { mkdir } from "node:fs/promises";
 import { BUILD_ID, errorMessage, paths } from "../../config";
-import { pluginData } from "../bubbles";
 import { readConversation } from "../conversations";
 import { consume, pending, put } from "../inbox";
 import { tryStorageLock } from "../lock";
@@ -77,6 +76,8 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   const watchers = await backgroundWatchers(conversation, meta.directory);
   const idle = phaseTracker(spanRecorder(conversation, "orchestrator", event => { if (event.kind === "notice") options.log(`${event.text}\n`); }));
   let compactRequested = false, stopping = false;
+  const stopRequested = (): boolean => stopping;
+  const compactPending = (): boolean => compactRequested;
   let turnAbort: AbortController | null = null;
   const stopSignals: NodeJS.Signals[] = ["SIGTERM", "SIGHUP", "SIGINT"];
   for (const signal of stopSignals) process.on(signal, () => { stopping = true; turnAbort?.abort(new Error(`daemon ${signal}`)); });
@@ -118,11 +119,11 @@ export async function runDaemon(options: DaemonOptions): Promise<number> {
   }
 
   try {
-    while (!stopping) {
+    while (!stopRequested()) {
       await handleCommands();
-      if (stopping) break;
+      if (stopRequested()) break;
       await maintenance();
-      if ((await pending(conversation, "orchestrator")).length > 0 || compactRequested) {
+      if ((await pending(conversation, "orchestrator")).length > 0 || compactPending()) {
         const turn = status.turns + 1;
         const writer = liveWriter(conversation, turn);
         turnAbort = new AbortController();

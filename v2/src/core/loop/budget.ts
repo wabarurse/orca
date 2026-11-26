@@ -13,10 +13,11 @@ export type Window = {
 
 export const estimate = (value: unknown): number => {
   let images = 0;
-  const text = JSON.stringify(value, (_key, item: unknown) => {
+  const serialized: unknown = JSON.stringify(value, (_key, item: unknown) => {
     if (typeof item === "object" && item !== null && "type" in item && item.type === "image") { images++; return { type: "image" }; }
     return item;
-  }) ?? "";
+  });
+  const text = typeof serialized === "string" ? serialized : "";
   return Math.ceil(Buffer.byteLength(text) / 3) + 32 + images * 6000;
 };
 

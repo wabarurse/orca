@@ -37,7 +37,7 @@ function open(server: Server, cwd: string): Live {
   } else {
     const own = Object.keys(server.headers).some(name => name.toLowerCase() === "authorization");
     transport = new StreamableHTTPClientTransport(new URL(server.url ?? ""), {
-      authProvider: own ? undefined : oauthProvider(server),
+      ...(own ? {} : { authProvider: oauthProvider(server) }),
       requestInit: { headers: server.headers },
       reconnectionOptions: { maxRetries: 0, initialReconnectionDelay: 1000, maxReconnectionDelay: 1000, reconnectionDelayGrowFactor: 1 },
     });
