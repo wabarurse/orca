@@ -436,6 +436,7 @@ export class App {
     if (text.startsWith("/")) { await this.command(text); return; }
     await say(this.conversation.id, text, this.images, delivery);
     this.images = [];
+    this.deps.terminal.scroll("end");
     await this.startDaemon(this.conversation.id);
     await this.poll();
   }
@@ -854,7 +855,7 @@ export class App {
       account: this.account.length > 0 ? `${this.account} · ${this.model}${this.settings}${contextLine(this.status?.contextTokens ?? null, this.model)}` : null, details: [this.conversation.directory], fin };
     const sent = this.busy ? [] : this.queued.map(m => userItem(m.text, `sent-${m.id}`, { cols, open: this.open }));
     t.show({ kind: "chat", header, items: [...this.cached, ...sent], tail: tail(this.events, this.lastText, cols, this.deps.now(), this.busy, this.waiting),
-      updates: this.events.length, welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
+      welcome: whaleRows(cols, t.rows - HEADER_ROWS - footer.length), footer, cursor });
   }
 
   private modalLine(modal: Modal): string {

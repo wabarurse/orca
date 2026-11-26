@@ -4,7 +4,7 @@ import { createTestRenderer } from "@opentui/core/testing";
 import type { screens } from "../components";
 import { Display } from "./display";
 
-const chat = (rows: string[]): screens.ChatScreen => ({ kind: "chat", header: null, items: [{ kind: "rows", key: "r", gap: false, rows }], tail: [], updates: 0, welcome: [], footer: ["› "], cursor: null });
+const chat = (rows: string[]): screens.ChatScreen => ({ kind: "chat", header: null, items: [{ kind: "rows", key: "r", gap: false, rows }], tail: [], welcome: [], footer: ["› "], cursor: null });
 
 test("hovering a link underlines it, clicking it asks to open it, and a finished drag selection asks to copy", async () => {
   const setup = await createTestRenderer({ width: 60, height: 10 });
@@ -36,32 +36,25 @@ test("hovering a link underlines it, clicking it asks to open it, and a finished
   await setup.dispose();
 });
 
-test("any update to the chat brings it back to the bottom, even after scrolling up, but a spinner tick does not", async () => {
+test("at the bottom new content keeps the view at the bottom; scrolled up, new content and streaming leave it in place", async () => {
   const setup = await createTestRenderer({ width: 40, height: 10 });
   const display = new Display(setup.renderer, () => {}, () => {});
   const rows = Array.from({ length: 30 }, (_, i) => `line ${i}`);
   display.show(chat(rows));
   await setup.renderOnce();
-  display.scroll("page-up");
-  display.scroll("page-up");
-  await setup.renderOnce();
-  expect(setup.captureCharFrame()).not.toContain("line 29");
-
   display.show(chat([...rows, "line 30"]));
   await setup.renderOnce();
   expect(setup.captureCharFrame()).toContain("line 30");
 
   display.scroll("page-up");
-  await setup.renderOnce();
-  display.show({ ...chat([...rows, "line 30"]), tail: ["streaming"], updates: 1 });
-  await setup.renderOnce();
-  expect(setup.captureCharFrame()).toContain("streaming");
-
   display.scroll("page-up");
   await setup.renderOnce();
-  display.show({ ...chat([...rows, "line 30"]), tail: ["streaming ⠋ 3s"], updates: 1 });
+  const before = setup.captureCharFrame();
+  display.show(chat([...rows, "line 30", "line 31"]));
   await setup.renderOnce();
-  expect(setup.captureCharFrame()).not.toContain("streaming");
+  display.show({ ...chat([...rows, "line 30", "line 31"]), tail: ["streaming"] });
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toBe(before);
   await setup.dispose();
 });
 

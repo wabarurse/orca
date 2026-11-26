@@ -22,7 +22,6 @@ export type ChatScreen = {
   header: ScreenHeader | null;
   items: ScreenItem[];
   tail: string[];
-  updates: number;
   welcome: string[];
   footer: string[];
   cursor: { row: number; col: number } | null;
