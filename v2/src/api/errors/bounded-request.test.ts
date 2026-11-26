@@ -28,7 +28,7 @@ function clock() {
 const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 async function advance(ms: number) {
   const end = now + ms;
-  while (true) {
+  for (;;) {
     const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
     if (next === undefined || next[1].at > end) break;
     now = next[1].at; timers.delete(next[0]); next[1].run(); await drain();
@@ -98,7 +98,7 @@ for (const mode of ["cancel", "total", "exhaust"]) test(`safe transient retries:
 
 for (const error of [fail(401), fail(400), { status: 429, error: { code: "insufficient_quota" } }]) test("quota/permanent rejection never retries", async () => {
   clock(); let calls = 0;
-  const caught = await result(boundedModelRequest(async () => { calls++; throw error; }));
+  const caught = await result(boundedModelRequest(async () => { calls++; const thrown: unknown = error; throw thrown; }));
   expect(caught).toBeInstanceOf(ModelRequestError); expect(messageOf(caught)).not.toContain("SECRET");
   expect(calls).toBe(1); expect(timers.size).toBe(0);
 });

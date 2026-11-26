@@ -189,7 +189,7 @@ for (const { outcome, statuses, flags } of refreshScenarios) test(`Codex opt-in 
     const request = input instanceof Request ? new Request(input, init) : new Request(String(input), init);
     authorization.push(request.headers.get("authorization"));
     if (statuses[calls - 1] === 200) return codexSSE([{ type: "response.completed", response: { status: "completed", output: [] } }]);
-    return Response.json({ error: { type: "authentication_error" } }, { status: statuses[calls - 1] });
+    return Response.json({ error: { type: "authentication_error" } }, { status: statuses[calls - 1] ?? 200 });
   }, { preconnect: fetch.preconnect }));
   const provider = openai(async opts => {
     refresh.push(opts?.forceRefresh);

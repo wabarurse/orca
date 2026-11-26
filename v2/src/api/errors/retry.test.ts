@@ -48,10 +48,11 @@ test("withTransientRetries: a bounded number of retries, none after the stream s
 test("withTransientRetries: an abort mid-backoff throws the abort reason at once; an aborted signal never starts", async () => {
   const controller = new AbortController();
   const reason = new Error("cancelled by user");
-  let attempts = 0, noticed = false;
+  let attempts = 0;
+  const seen = { notice: false };
   const result = withTransientRetries(async () => { attempts++; throw Object.assign(new Error("down"), { status: 503 }); },
-    { backoffMs: [60_000], signal: controller.signal, notice: () => { noticed = true; } });
-  while (!noticed) await Bun.sleep(1);
+    { backoffMs: [60_000], signal: controller.signal, notice: () => { seen.notice = true; } });
+  while (!seen.notice) await Bun.sleep(1);
   controller.abort(reason);
   expect(await caught(result)).toBe(reason);
   expect(attempts).toBe(1);
@@ -107,9 +108,9 @@ test("Claude: a cancel during the backoff rejects with the cancellation at once,
   const s = await claudeServer(() => Response.json({ type: "error", error: { type: "api_error", message: "down" } }, { status: 503 }));
   try {
     const controller = new AbortController(), reason = new Error("cancelled by user");
-    let noticed = false;
-    const result = anthropic(s.client, { retry: { backoffMs: [60_000] } }).complete(claudeRequest({ signal: controller.signal, onNotice: () => { noticed = true; } }));
-    while (!noticed) await Bun.sleep(1);
+    const seen = { notice: false };
+    const result = anthropic(s.client, { retry: { backoffMs: [60_000] } }).complete(claudeRequest({ signal: controller.signal, onNotice: () => { seen.notice = true; } }));
+    while (!seen.notice) await Bun.sleep(1);
     controller.abort(reason);
     expect(await caught(result)).toBe(reason);
     expect(s.requests()).toBe(1);
@@ -170,9 +171,9 @@ test("Codex: a 500 is retried up to the bound, then fails; a 400 is not retried"
 test("Codex: a cancel during the backoff rejects with the cancellation at once, with no further request", async () => {
   const requests = intercept(async () => Response.json({ error: { message: "down" } }, { status: 503 }));
   const controller = new AbortController(), reason = new Error("cancelled by user");
-  let noticed = false;
-  const result = openai(async () => fakeCodexTokens(), { retry: { backoffMs: [60_000] } }).complete(codexRequest({ signal: controller.signal, onNotice: () => { noticed = true; } }));
-  while (!noticed) await Bun.sleep(1);
+  const seen = { notice: false };
+  const result = openai(async () => fakeCodexTokens(), { retry: { backoffMs: [60_000] } }).complete(codexRequest({ signal: controller.signal, onNotice: () => { seen.notice = true; } }));
+  while (!seen.notice) await Bun.sleep(1);
   controller.abort(reason);
   expect(await caught(result)).toBe(reason);
   expect(requests()).toBe(1);

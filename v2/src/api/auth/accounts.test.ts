@@ -75,7 +75,7 @@ function streamResponse(): Response {
   return new Response(events.map((e) => `event: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`).join(""), { headers: { "content-type": "text/event-stream" } });
 }
 
-const turn = (onText = (_: string) => {}): CompleteRequest => ({
+const turn = (onText: (text: string) => void = () => {}): CompleteRequest => ({
   model: "claude-test", messages: [{ role: "user", content: "hi" }],
   tools: [{ name: "bash", input_schema: { type: "object", properties: { command: { type: "string" } } } }],
   maxTokens: 100, onText,
