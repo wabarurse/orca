@@ -54,25 +54,15 @@ describe("the OAuth sign-in flow", () => {
     if (pid !== null) await writeFile(join(lock, "pid"), String(pid));
   }
 
-  test("breakStaleLock removes a lock whose owner pid is dead", async () => {
+  test.each([
+    ["removes a lock whose owner pid is dead", "dead", true],
+    ["leaves a live owner's lock alone", "live", false],
+    ["leaves a lock with no pid file (mid-acquisition) alone", "none", false],
+  ] as const)("breakStaleLock %s", async (_case, owner, broken) => {
     const lock = join(await workdir(), "cred.json.lock");
-    await placeLock(lock, await deadPid());
-    expect(await breakStaleLock(lock)).toBe(true);
-    expect(existsSync(lock)).toBe(false);
-  });
-
-  test("breakStaleLock leaves a live owner's lock alone", async () => {
-    const lock = join(await workdir(), "cred.json.lock");
-    await placeLock(lock, process.pid);
-    expect(await breakStaleLock(lock)).toBe(false);
-    expect(existsSync(lock)).toBe(true);
-  });
-
-  test("breakStaleLock leaves a lock with no pid file (mid-acquisition) alone", async () => {
-    const lock = join(await workdir(), "cred.json.lock");
-    await placeLock(lock, null);
-    expect(await breakStaleLock(lock)).toBe(false);
-    expect(existsSync(lock)).toBe(true);
+    await placeLock(lock, owner === "dead" ? await deadPid() : owner === "live" ? process.pid : null);
+    expect(await breakStaleLock(lock)).toBe(broken);
+    expect(existsSync(lock)).toBe(!broken);
   });
 
   test("withCredentialLock breaks a stale lock and runs the action", async () => {

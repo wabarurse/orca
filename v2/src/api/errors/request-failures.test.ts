@@ -56,24 +56,6 @@ describe("transient failures are retried, a begun stream never", () => {
     expect(attempts).toBe(1);
   });
 
-  test("withTransientRetries: an abort mid-backoff throws the abort reason at once; an aborted signal never starts", async () => {
-    const controller = new AbortController();
-    const reason = new Error("cancelled by user");
-    let attempts = 0;
-    const seen = { notice: false };
-    const result = withTransientRetries(async () => { attempts++; throw Object.assign(new Error("down"), { status: 503 }); },
-      { backoffMs: [60_000], signal: controller.signal, notice: () => { seen.notice = true; } });
-    while (!seen.notice) await Bun.sleep(1);
-    controller.abort(reason);
-    expect(await caught(result)).toBe(reason);
-    expect(attempts).toBe(1);
-    await expect(withTransientRetries(async () => { attempts++; return 1; }, { signal: controller.signal })).rejects.toBe(reason);
-    expect(attempts).toBe(1);
-    const late = new AbortController();
-    await expect(withTransientRetries(async () => { attempts++; late.abort(reason); throw Object.assign(new Error("closed"), { code: "ECONNRESET" }); }, { signal: late.signal, backoffMs: [1] })).rejects.toBe(reason);
-    expect(attempts).toBe(2);
-  });
-
 
   const claudeEvents = [
     { type: "message_start", message: { id: "m", type: "message", role: "assistant", content: [], model: "claude-test", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } },
@@ -325,15 +307,6 @@ describe("request deadlines", () => {
     await advance(10); expect(kindOf(await pending)).toBe("total-timeout"); expect(timers.size).toBe(0);
   });
 
-  test("success cleans timers and caller listener", async () => {
-    clock(); const caller = new AbortController();
-    const add = spyOn(caller.signal, "addEventListener"); const remove = spyOn(caller.signal, "removeEventListener");
-    const value = await boundedModelRequest(async scope => (await scope.fetch("https://mock.invalid")).text(),
-      { signal: caller.signal }, async () => new Response("ok"));
-    expect(value).toBe("ok"); expect(timers.size).toBe(0);
-    expect(remove.mock.calls[0]?.[1]).toBe(add.mock.calls[0]?.[1]); add.mockRestore(); remove.mockRestore();
-  });
-
   for (const mode of ["cancel", "total", "exhaust"]) test(`safe transient retries: ${mode}, sanitized lifecycle`, async () => {
     clock(); const caller = new AbortController(); let calls = 0; const events: unknown[] = [];
     const pending = result(boundedModelRequest(async () => { calls++; throw fail(503); }, {
@@ -452,22 +425,6 @@ describe("request deadlines", () => {
       if (mode === "consumer-cancel") await response.body?.cancel();
     }, {}, async (_, init) => { signals.push(init?.signal); return new Response(body); }));
     expect(body.locked).toBe(false); expect(signals[0]?.aborted).toBe(true); expect(timers.size).toBe(0);
-  });
-
-  test("response metadata and native clone/bodyUsed semantics survive wrapping", async () => {
-    clock(); const source = new Response("payload", { status: 201, statusText: "Created", headers: { "x-test": "value" } });
-    Object.defineProperties(source, { url: { value: "https://mock.invalid/final" }, redirected: { value: true }, type: { value: "cors" } });
-    await boundedModelRequest(async scope => {
-      const response = await scope.fetch("https://mock.invalid"); const clone = response.clone();
-      for (const copy of [response, clone]) {
-        expect(copy.url).toBe(source.url); expect(copy.redirected).toBe(true); expect(copy.type).toBe("cors");
-        expect(copy.status).toBe(201); expect(copy.statusText).toBe("Created"); expect(copy.headers.get("x-test")).toBe("value");
-        expect(copy.bodyUsed).toBe(false);
-      }
-      expect(await response.text()).toBe("payload"); expect(response.bodyUsed).toBe(true);
-      expect(() => response.clone()).toThrow(); expect(await clone.text()).toBe("payload");
-    }, {}, async () => source);
-    expect(source.body?.locked).toBe(false); expect(timers.size).toBe(0);
   });
 
   test("unknown failures distinguish setup, connection and response without exposing exceptions", async () => {

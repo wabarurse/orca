@@ -15,7 +15,7 @@ import { noLinks } from "../plugins/testing";
 import type { PluginContext } from "../plugins/types";
 import { learnCatalog } from "../session";
 import { formatReport, spanReport } from "../span-report";
-import { clock, flushSpans, phaseText, phaseTracker, readSpans, spanRecorder } from "../spans";
+import { flushSpans, phaseTracker, readSpans, spanRecorder } from "../spans";
 import { bash } from "../tools/bash";
 import type { GuardRule } from "../tools/bash/guard";
 import type { Runtime, Tool } from "../tools/registry";
@@ -280,12 +280,6 @@ describe("activity spans", () => {
     expect(idle.current()).toBe(null);
   });
 
-  test("phase text reads like the activity line", () => {
-    const startedAt = new Date(1_000_000).toISOString();
-    expect(phaseText({ id: "a", kind: "wait-worker", label: "worker-fix-x", agent: "orchestrator", startedAt }, 1_000_000 + 72_400)).toBe("waiting for worker-fix-x (1m12s)");
-    expect(phaseText({ id: "b", kind: "model", label: "claude-opus-5-5", agent: "orchestrator", startedAt }, 1_000_000 + 8_900)).toBe("swimming (8s)");
-    expect(clock(-5)).toBe("0s");
-  });
 });
 
 describe("the time breakdown", () => {

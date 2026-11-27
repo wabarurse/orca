@@ -68,17 +68,14 @@ describe("loading and enabling plugins", () => {
       expect(scout.system).toBe("scout things");
     });
 
-    test("a core tool name without replaces fails validation", async () => {
-      const bad = shell("bad", { tools: [{ tool: tool("read"), roles: ["worker"], replaces: false }] });
-      registerBuiltins([{ name: "bad", dir: "/x/bad", index: async () => ({ default: bad }), ui: null, background: null }]);
-      const { problems } = await availablePlugins(null, false);
-      expect(problems[0]?.problem).toContain("set replaces: true");
-    });
-
-    test("a plugin named after a reserved $ORCA_DATA folder fails validation", async () => {
-      registerBuiltins([{ name: "global", dir: "/x/global", index: async () => ({ default: shell("global", {}) }), ui: null, background: null }]);
-      const { problems } = await availablePlugins(null, false);
-      expect(problems[0]?.problem).toContain("reserved");
+    test.each([
+      ["a core tool name without replaces", "bad", { tools: [{ tool: tool("read"), roles: ["worker"], replaces: false }] }, "set replaces: true"],
+      ["a plugin named after a reserved $ORCA_DATA folder", "global", {}, "reserved"],
+      ["a plugin guard rule without a valid id", "badguard", { guard: [{ id: "Bad Id", group: "security", test: () => true, reason: "r", suggest: () => "s" }] }, "guard.0.id"],
+    ] satisfies [string, string, Partial<Plugin>, string][])("%s fails validation", async (_case, name, extra, problem) => {
+      const bad = shell(name, extra);
+      registerBuiltins([{ name, dir: `/x/${name}`, index: async () => ({ default: bad }), ui: null, background: null }]);
+      expect((await availablePlugins(null, false)).problems[0]?.problem).toContain(problem);
     });
 
     test("a user plugin loads only once this exact content is approved", async () => {
@@ -115,12 +112,6 @@ describe("loading and enabling plugins", () => {
       await expect(bash.run({ command: "make all" }, ctx)).rejects.toMatchObject({ rule: "no-make", message: "refused (no-make): this repo builds with bun. Use: bun run build" });
       await expect(bash.run({ command: "sudo ls" }, ctx)).rejects.toMatchObject({ rule: "sudo" });
       expect(await bash.run({ command: "echo built" }, ctx)).toBe("built");
-    });
-
-    test("a plugin guard rule without a valid id fails validation", async () => {
-      const bad = shell("badguard", { guard: [{ id: "Bad Id", group: "security", test: () => true, reason: "r", suggest: () => "s" }] });
-      registerBuiltins([{ name: "badguard", dir: "/x/badguard", index: async () => ({ default: bad }), ui: null, background: null }]);
-      expect((await availablePlugins(null, false)).problems[0]?.problem).toContain("guard.0.id");
     });
   });
 });

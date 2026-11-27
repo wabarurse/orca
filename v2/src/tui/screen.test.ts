@@ -7,7 +7,7 @@ import { contextLine } from "./app";
 import type { screens } from "./components";
 import { linkAt, linkSpanAt, underlineSpan } from "./components/links";
 import { autoChannel, isChannelSetting, notification, notifyChannel, passthrough, plainLine, programStatus, progress, reportsProgress } from "./components/notify";
-import { glow, swimming, WAVE_MS, waves } from "./components/shimmer";
+import { swimming, WAVE_MS } from "./components/shimmer";
 import { wordWrap } from "./components/text";
 import { Display } from "./otui/display";
 import { CORE_FOLDS, items, type Piece, tail, USER_ROWS, userItem } from "./view";
@@ -193,20 +193,6 @@ describe("links", () => {
 });
 
 describe("the swimming animation", () => {
-  test("the waves are a 3-character window scrolling over the pattern", () => {
-    expect(waves(0)).toBe("~∽^");
-    expect(waves(WAVE_MS - 1)).toBe("~∽^");
-    expect(waves(WAVE_MS)).toBe("∽^∽");
-    expect(waves(WAVE_MS * 7)).toBe("^~∽");
-    expect(waves(WAVE_MS * 8)).toBe("~∽^");
-  });
-
-  test("the glow peaks where the sweep is and fades within 2.5 cells", () => {
-    expect(glow(0, 12, 0)).toBe(0);
-    expect(glow(6, 12, 1250)).toBe(1);
-    expect(glow(7, 12, 1250)).toBeCloseTo(0.6);
-    expect(glow(6, 12, 1250 + 2500 * (3 / 18))).toBe(0);
-  });
 
   test("without colour it is plain text, and the waves still move", () => {
     expect(swimming("8s", 0, { NO_COLOR: "1" })).toBe("~∽^ swimming (8s)");

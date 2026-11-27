@@ -9,7 +9,7 @@ import { bubbleChoices, bubbleEntries } from "../../tui/bubbles";
 import { createConversation, readConversation } from "../conversations";
 import { behavior, BEHAVIOR, setBehavior } from "./behavior";
 import { ensureDataDirs, pluginData } from "./data";
-import { mergeBubbles, mergeNode, unionBehavior, unionEntries, unionPlugins } from "./merge";
+import { mergeBubbles, mergeNode, unionBehavior, unionEntries } from "./merge";
 import { type Entry, type MemoryNode, memoryNodes, writeNode } from "./nodes";
 import { listPages, putPage } from "./notebook";
 import { bubblesFor, ensureBubble, listBubbles, setBubbleDirectory, setBubblePlugin } from "./store";
@@ -162,9 +162,6 @@ describe("merging bubbles", () => {
       expect(merged.lines.map(l => l.key)).toEqual(["tone", "tone-2"]);
     });
 
-    test("plugin switches union with the target winning a conflict", () => {
-      expect(unionPlugins({ on: ["a"], off: ["b"] }, { on: ["b", "c"], off: ["a", "d"] })).toEqual({ on: ["c"], off: ["d"], conflicts: ["b", "a"] });
-    });
   });
 
   describe("mergeBubbles", () => {

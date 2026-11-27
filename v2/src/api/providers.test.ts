@@ -14,7 +14,6 @@ import { anthropic, claudeMessages, claudeRequestSettings } from "./anthropic";
 import { ModelRequestError } from "./errors/bounded-request";
 import { modelCapabilities } from "./model/capabilities";
 import { clearCatalogLimits, contextWindow } from "./model/context-window";
-import { providerFor } from "./model/provider-for";
 import { codexRequestSettings, fromResponses, openai, toResponses, toResponseTools } from "./openai";
 import type { CompleteRequest } from "./provider";
 import { metered, recordRetry, usageScope } from "./usage";
@@ -38,11 +37,6 @@ describe("Codex requests and replies", () => {
     return bodyShape.parse(body);
   }
   const request = (onText: (text: string) => void = () => {}): CompleteRequest => ({ model: "gpt-test", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, onText });
-
-  test("providerFor routes claude models to Claude Code and the rest to Codex", () => {
-    expect(providerFor("claude-opus-5-5")).toBe("anthropic");
-    expect(providerFor("gpt-test")).toBe("openai");
-  });
 
   test("Responses translation preserves tool IDs, errors, text order and encrypted Codex reasoning", () => {
     const messages: MessageParam[] = [

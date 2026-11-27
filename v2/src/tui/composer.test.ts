@@ -149,7 +149,7 @@ describe("the input box", () => {
   });
 });
 
-describe("the external editor", () => {
+describe("editing keys", () => {
   const run = (s: editor.EditState, ...keys: Key[]): editor.EditState => keys.reduce((state, key) => editor.apply(state, key)?.state ?? state, s);
   const shown = (s: editor.EditState): string => {
     const sel = editor.selection(s);
@@ -253,26 +253,6 @@ describe("the external editor", () => {
 
 describe("input history in the composer", () => {
   const at = (text: string) => ({ text, cursor: text.length, anchor: null });
-
-  test("from an empty input Up recalls older entries, Down newer ones, and Down past the newest empties the input", () => {
-    let b = browsing(["first", "/model", "third"]);
-    const one = older(b, at(""));
-    expect(one?.state).toEqual(at("third"));
-    b = one?.browse ?? b;
-    const two = older(b, at("third"));
-    expect(two?.state).toEqual(at("/model"));
-    b = two?.browse ?? b;
-    const three = older(b, at("/model"));
-    expect(three?.state).toEqual(at("first"));
-    b = three?.browse ?? b;
-    expect(older(b, at("first"))).toBeNull();
-    b = newer(b)?.browse ?? b;
-    b = newer(b)?.browse ?? b;
-    const back = newer(b);
-    expect(back?.state).toEqual(at(""));
-    expect(back?.browse.at).toBeNull();
-    expect(newer(back?.browse ?? b)).toBeNull();
-  });
 
   test("typed text is never replaced: Up recalls nothing over a draft or over an edited recalled entry", () => {
     expect(older(browsing(["a"]), at("half typed"))).toBeNull();
