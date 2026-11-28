@@ -144,7 +144,7 @@ async function pluginScope(args: string[], readOnly: boolean): Promise<Result<Sc
 }
 
 const namesInText = new Intl.ListFormat("en", { type: "conjunction" });
-const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you /stop it (or orca2 stop --conversation <id>) and reopen orca2.\n";
+const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you run orca2 daemon stop --conversation <id> and reopen orca2.\n";
 
 async function switches(names: string[], scope: Scope, state: "on" | "off" | null, out: Out): Promise<number> {
   const list = namesInText.format(names);

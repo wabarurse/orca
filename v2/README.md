@@ -30,12 +30,13 @@ bun run check && bun run lint && bun test
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
-- **Stopping and quitting**: Ctrl+C (or `/cancel`) stops the orchestrator's running turn in this chat; agents keep
+- **Stopping and quitting**: Ctrl+C (or `/stop`) stops the orchestrator's running turn in this chat; agents keep
   running. A second Ctrl+C within 2 seconds (or `/kill`) stops every running subagent of the chats open in this orca2
   (as `subagent stop` does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then
-  quits; after 2 seconds the next Ctrl+C counts as a first one again. `/exit` (or `/quit`) quits and leaves the
-  subagents running. Either way each chat's orchestrator daemon stays up (idle after `/kill`) and the next orca2 picks
-  it up; `/stop` stops it. Ctrl+D quits no more.
+  quits; after 2 seconds the next Ctrl+C counts as a first one again. `/close` (or `/quit`) quits and leaves the
+  daemon and subagents running. Either way each chat's orchestrator daemon stays up (idle after `/kill`) and the next
+  orca2 picks it up; `orca2 daemon stop` shuts it down. `/close-tab` closes only the chat's tab. Ctrl+D quits no more. A command that takes no arguments runs only when
+  it is alone in the composer: `/kill now` does nothing but say `/kill takes no arguments`, and keeps the draft.
 - **Composer history**: Up/Down recall earlier input, messages and slash commands alike, only while the composer is
   empty or still shows an unedited recalled entry; over typed text they only move the cursor and never replace it.
   Down past the newest empties the composer again. Kept per
@@ -208,7 +209,7 @@ To enable several installed plugins together, run `orca2 plugin enable images sa
 - **Hooks**: `beforeTool` (run with changed input, block, or ask the user), `afterTool`, `beforeRequest`, `onInput`,
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
-  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `/stop` (or `orca2 stop`) and reopening orca2.
+  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `orca2 daemon stop` and reopening orca2.
 
 ## Layout
 

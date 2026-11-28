@@ -10,7 +10,7 @@ import { removeConversation } from "../core/lifecycle";
 import { cancel, ensureDaemon, say, unsay } from "../core/daemon/client";
 import { readLive } from "../core/daemon/live";
 import { saveImage } from "../core/images";
-import { COMMANDS, command as coreCommand, readViewClear, type CommandContext, type CoreCommand, type Run } from "../core/commands";
+import { COMMANDS, command as coreCommand, readViewClear, rejectsArguments, type CommandContext, type CoreCommand, type Run } from "../core/commands";
 import { readInputHistory, recordInput, remember } from "../core/input-history";
 import { pending } from "../core/inbox";
 import { enabledNames } from "../core/plugins/enable";
@@ -449,6 +449,9 @@ export class App {
   private async submit(delivery: "steer" | "follow"): Promise<void> {
     const text = this.composer.text.trim();
     if (text.length === 0 && this.images.length === 0) return;
+    const [name = "", ...rest] = text.startsWith("/") ? text.slice(1).split(/\s+/) : [];
+    const known = coreCommand(name);
+    if (known !== null && rejectsArguments(known, rest)) { this.flash(`/${name} takes no arguments`, true); return; }
     this.input.setValue("");
     if (text.length > 0) await this.remember(text);
     else this.history = browsing(this.history.entries);
@@ -560,10 +563,10 @@ export class App {
   private async command(text: string): Promise<void> {
     const [name = "", ...rest] = text.slice(1).split(/\s+/);
     const args = rest.join(" ");
-    if (name === "quit" || name === "exit") { await this.quit(); return; }
+    if (name === "quit" || name === "close") { await this.quit(); return; }
     if (name === "kill") { await this.kill(); return; }
-    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /cancel stop the turn · Ctrl+C twice or /kill stop every agent and quit · /exit quit, agents keep running · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L switch chats · ↑/↓ earlier input · ⌥←/→ words · ⌘←/→ line · ⌘A select all · ⌘Z/⌘⇧Z undo/redo (Ctrl+Z/Ctrl+Y) · ⌘C/⌘X/⌘V copy/cut/paste · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
-    if (name === "close") { await this.closeTab(); return; }
+    if (name === "help") { this.flash(`Enter send · Shift+Enter new line · Tab queue after the work · Esc take back · Ctrl+C or /stop stop the turn · Ctrl+C twice or /kill stop every agent and quit · /close quit, the daemon and agents keep running · /close-tab close the tab · Ctrl+A agents · Ctrl+B bubbles · Ctrl+P plugins · Ctrl+V image · Ctrl+N new · Ctrl+H/Ctrl+L switch chats · ↑/↓ earlier input · ⌥←/→ words · ⌘←/→ line · ⌘A select all · ⌘Z/⌘⇧Z undo/redo (Ctrl+Z/Ctrl+Y) · ⌘C/⌘X/⌘V copy/cut/paste · ${COMMANDS.map(c => `/${c.name}`).join(" ")}${this.commands().map(c => ` /${c.name}`).join("")}`); return; }
+    if (name === "close-tab") { await this.closeTab(); return; }
     if (name === "plugins") { await this.openPage(this.tabs().findIndex(t => t.id === "plugins")); return; }
     const core = coreCommand(name);
     if (core !== null && core.run !== null) { await this.runCore(core, core.run, rest.filter(a => a.length > 0)); return; }
@@ -659,11 +662,12 @@ export class App {
     const now = this.deps.now();
     if (now - this.lastCtrlC < AGAIN_MS) { await this.kill(); return; }
     this.lastCtrlC = now;
-    const cancel = coreCommand("cancel")?.run ?? null;
-    if (cancel === null) return;
-    const done = await cancel([], this.commandContext(null, () => undefined)).catch((error: unknown) => fail(errorMessage(error)));
+    const stop = coreCommand("stop")?.run ?? null;
+    if (stop === null) return;
+    const running = (await readStatus(this.conversation.id).catch(() => null))?.state === "turn";
+    const done = await stop([], this.commandContext(null, () => undefined)).catch((error: unknown) => fail(errorMessage(error)));
     if (!done.ok) { this.flash(`${done.error} · Ctrl+C again to stop every agent and quit`, true); return; }
-    this.flash(`${done.data === "nothing is running" ? "nothing is running" : "orchestrator stopped, agents keep running"} · Ctrl+C again to stop every agent and quit`);
+    this.flash(`${running ? "orchestrator stopped, agents keep running" : "nothing is running"} · Ctrl+C again to stop every agent and quit`);
   }
 
   private async kill(): Promise<void> {

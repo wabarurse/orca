@@ -16,7 +16,7 @@ permissions, and approval is recorded for an exact version. When the user asks y
 2. Edit `index.ts` (and `ui.ts` / `background.ts` if the plugin has them).
 3. `orca2 plugin check <folder>`: loads it, type-checks it against orca2's types and runs its `*.test.ts` against a
    temporary home. Fix everything it reports. Run it again after every change.
-4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. After changing an installed plugin run `orca2 plugin update <name> [--from <folder>] --yes`, never `enable` (it also turns the plugin on). New agents load the change at once; a running chat keeps what it loaded until it is restarted (`/stop`, then reopen orca2). Verify with `orca2 plugin list --json`. The `orca2 skill` guide has the exact commands and scopes.
+4. For requested installs use `orca2 plugin enable <name> --from <folder> --yes`. After changing an installed plugin run `orca2 plugin update <name> [--from <folder>] --yes`, never `enable` (it also turns the plugin on). New agents load the change at once; a running chat keeps what it loaded until it is restarted (`orca2 daemon stop`, then reopen orca2). Verify with `orca2 plugin list --json`. The `orca2 skill` guide has the exact commands and scopes.
 
 Names: lowercase letters, digits and dashes (`pr-watch`); the folder name and `name` must match; `bubble` and `global`
 are reserved (they are `$ORCA_DATA`'s shared folders). Tool names:
@@ -265,7 +265,7 @@ export default background;
   `runner = "<name>"` in config.toml; with none enabled the core's plain runner starts agents. Build `start` on
   `launchCommand(launch)`: it puts `launch.env` in a 0600 file the command sources and deletes, and tees the output
   to `launch.log`; run its `argv` and call its `cleanup()` when the window never opened.
-- `stop` runs when the daemon stops (an `orca2 stop`, a deletion, or a signal; not after a crash): processes you
+- `stop` runs when the daemon stops (an `orca2 daemon stop`, a deletion, or a signal; not after a crash): processes you
   started may keep running and the next daemon's watcher can pick them up. `remove` runs when the conversation is
   deleted, for anything kept outside `$ORCA_DATA` (and to kill what you started).
 - There is no hook for an agent ending; a watcher can notice it through `ctx.agents()`.

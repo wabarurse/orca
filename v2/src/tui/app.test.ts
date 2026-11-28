@@ -175,14 +175,14 @@ describe("tui", () => {
     expect(t.app["quitting"]).toBe(true);
   });
 
-  test("Ctrl+C runs the shared cancel and keeps the app; a second Ctrl+C within the window runs kill and quits; after it, the next counts as a first", async () => {
+  test("Ctrl+C runs the shared stop and keeps the app; a second Ctrl+C within the window runs kill and quits; after it, the next counts as a first", async () => {
     const t = await app(home.path());
     const calls: string[] = [];
     const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
-    for (const c of COMMANDS) if (c.name === "cancel" || c.name === "kill") c.run = async () => { calls.push(c.name); return { ok: true, data: c.name === "cancel" ? "cancelling…" : "stopped" }; };
+    for (const c of COMMANDS) if (c.name === "stop" || c.name === "kill") c.run = async () => { calls.push(c.name); return { ok: true, data: c.name === "stop" ? "nothing is running" : "stopped" }; };
     try {
       await t.press({ name: "c", ctrl: true });
-      expect(await t.shows("orchestrator stopped")).toContain("orchestrator stopped, agents keep running");
+      expect(await t.shows("Ctrl+C again")).toContain("nothing is running · Ctrl+C");
       expect(t.app["quitting"]).toBe(false);
       t.app["lastCtrlC"] = Number.NEGATIVE_INFINITY;
       await t.press({ name: "c", ctrl: true });
@@ -190,9 +190,43 @@ describe("tui", () => {
       await t.press({ name: "c", ctrl: true });
       await Bun.sleep(100);
     } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
-    expect(calls).toEqual(["cancel", "cancel", "kill"]);
+    expect(calls).toEqual(["stop", "stop", "kill"]);
     expect(t.app["quitting"]).toBe(true);
     expect(t.exits).toEqual([0]);
+  });
+
+  test("a command that takes no arguments runs only alone in the composer; with more it keeps the draft and says so, in the TUI and the CLI", async () => {
+    const t = await app(home.path());
+    const id = t.app.conversationId();
+    const calls: string[] = [];
+    const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
+    for (const c of COMMANDS) if (c.run !== null) c.run = async args => { calls.push(`${c.name} ${args.join(",")}`); return { ok: true, data: `ran ${c.name}` }; };
+    const cases: { typed: string; ran: string | null }[] = [
+      { typed: "/kill sdfsdfsdff", ran: null },
+      { typed: "/stop now", ran: null },
+      { typed: "/clear-chat please", ran: null },
+      { typed: "/close later", ran: null },
+      { typed: "/help me", ran: null },
+      { typed: "/stop", ran: "stop " },
+      { typed: "/rename new name", ran: "rename new,name" },
+    ];
+    try {
+      for (const { typed, ran } of cases) {
+        calls.length = 0;
+        await t.type(typed);
+        await t.press({ name: "enter" });
+        await Bun.sleep(50);
+        expect(calls).toEqual(ran === null ? [] : [ran]);
+        expect(t.app["composer"].text).toBe(ran === null ? typed : "");
+        if (ran === null) expect(t.text()).toContain(`${typed.split(" ")[0] ?? ""} takes no arguments`);
+        t.app["input"].setValue("");
+      }
+      expect(t.app["quitting"]).toBe(false);
+      const err = process.stderr.write.bind(process.stderr);
+      process.stderr.write = (): boolean => true;
+      try { expect(await main(["kill", "extra", "--conversation", id])).toBe(2); } finally { process.stderr.write = err; }
+      expect(calls).toEqual([]);
+    } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
   });
 
   test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
