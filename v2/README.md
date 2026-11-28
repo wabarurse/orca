@@ -30,10 +30,13 @@ bun run check && bun run lint && bun test
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
-- **Quitting**: Ctrl+C (or `/kill`) stops every running subagent of the chats open in this orca2 (as `subagent stop`
-  does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then quits. `/exit` (or
-  `/quit`) quits and leaves the subagents running. Either way each chat's orchestrator daemon stays up (idle after
-  `/kill`) and the next orca2 picks it up; `/stop` stops it. `/cancel` stops the running turn only. Ctrl+D quits no more.
+- **Stopping and quitting**: Ctrl+C (or `/stop`) stops the orchestrator's running turn in this chat; agents keep
+  running. A second Ctrl+C within 2 seconds (or `/kill`) stops every running subagent of the chats open in this orca2
+  (as `subagent stop` does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then
+  quits; after 2 seconds the next Ctrl+C counts as a first one again. `/close` (or `/quit`) quits and leaves the
+  daemon and subagents running. Either way each chat's orchestrator daemon stays up (idle after `/kill`) and the next
+  orca2 picks it up; `orca2 daemon stop` shuts it down. `/close-tab` closes only the chat's tab. Ctrl+D quits no more. A command that takes no arguments runs only when
+  it is alone in the composer: `/kill now` does nothing but say `/kill takes no arguments`, and keeps the draft.
 - **Composer history**: Up/Down recall earlier input, messages and slash commands alike, only while the composer is
   empty or still shows an unedited recalled entry; over typed text they only move the cursor and never replace it.
   Down past the newest empties the composer again. Kept per
@@ -113,7 +116,7 @@ focuses it (closing an open picker or confirmation, like Esc).
 | Enter / Shift+Enter, Alt+Enter, Ctrl+J | send / new line | Shift+Enter: kitty keyboard |
 | click, drag, double-click, triple-click | place the cursor, select, select a word, select the line | mouse reporting |
 
-Ctrl+C still stops every agent and quits; Ctrl+H/Ctrl+L switch chats (⌥←/→ moves by word now). Your terminal's own
+Ctrl+C stops the turn and a second Ctrl+C stops every agent and quits; Ctrl+H/Ctrl+L switch chats (⌥←/→ moves by word now). Your terminal's own
 paste (⌘V in most terminals) arrives as a bracketed paste and is inserted as text, cleaned of control characters.
 
 What the terminal must deliver: orca2 turns on the kitty keyboard protocol (disambiguate + alternate keys) through
@@ -206,7 +209,7 @@ To enable several installed plugins together, run `orca2 plugin enable images sa
 - **Hooks**: `beforeTool` (run with changed input, block, or ask the user), `afterTool`, `beforeRequest`, `onInput`,
   and replacing a core tool (`replaces: true`).
 - **Dev loop**: `orca2 plugin new <name> [--dir]`, `orca2 plugin check <name|folder>` (load, type-check against
-  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `/stop` (or `orca2 stop`) and reopening orca2.
+  orca2's types, run its tests in a temporary home), `orca2 plugin enable <name> [--from folder]` to install and turn on, `orca2 plugin update <name> [--from folder]` to re-approve a changed plugin without changing where it is on. New agents load the change at once; a running chat keeps its loaded plugins until `orca2 daemon stop` and reopening orca2.
 
 ## Layout
 

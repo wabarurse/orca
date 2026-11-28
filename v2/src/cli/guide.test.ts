@@ -25,7 +25,7 @@ test("orca2 skill prints every usage line of orca2 help, plugin help and the mcp
   for (const line of lines) expect(guide.text).toContain(line);
   expect(USAGE).toContain("orca2 skill");
   expect(guide.text).toContain("orca2 plugin update <name>");
-  expect(guide.text).toContain("orca2 stop --conversation id (or /stop)");
+  expect(guide.text).toContain("orca2 daemon stop --conversation id, then the user reopens orca2.");
 });
 
 test("ensureBuiltinSkills installs the thin orca2 skill that runs orca2 skill", async () => {
@@ -46,16 +46,15 @@ test("the guide and help list every command of the shared table: runnable ones a
     if (c.run === null) expect(guide).toContain(`  /${c.name}: ${c.description}`);
     else { expect(USAGE).toContain(commandUsage(c)); expect(guide).toContain(commandUsage(c)); }
   }
-  for (const name of ["model", "effort", "fast", "mux", "compact", "accounts", "stop", "rename", "trust", "login", "kill", "cancel", "clear-chat"]) expect(COMMANDS.find(c => c.name === name)?.run ?? null).not.toBeNull();
-  for (const name of ["close", "quit", "help", "plugins"]) expect(COMMANDS.some(c => c.name === name && c.run === null)).toBe(true);
+  for (const name of ["model", "effort", "fast", "mux", "compact", "accounts", "stop", "rename", "trust", "login", "kill", "clear-chat"]) expect(COMMANDS.find(c => c.name === name)?.run ?? null).not.toBeNull();
+  for (const name of ["close", "close-tab", "quit", "help", "plugins"]) expect(COMMANDS.some(c => c.name === name && c.run === null)).toBe(true);
   expect(await agentGuide(null)).toContain("inside a conversation");
 });
 
 test("the TUI handles exactly the TUI-only commands itself and sends the rest to the table", async () => {
   const source = await Bun.file(join(import.meta.dir, "../tui/app.ts")).text();
   const body = source.slice(source.indexOf("private async command(text: string)"), source.indexOf("const own = this.uis"));
-  const handled = new Set([...body.matchAll(/name === "([a-z]+)"/g)].map(m => m[1]));
-  handled.delete("exit");
+  const handled = new Set([...body.matchAll(/name === "([a-z-]+)"/g)].map(m => m[1]));
   expect([...handled].sort()).toEqual([...COMMANDS.filter(c => c.run === null).map(c => c.name), "kill"].sort());
   expect(source).toContain('coreCommand("kill")');
   expect(body).toContain("coreCommand(name)");

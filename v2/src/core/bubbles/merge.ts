@@ -202,7 +202,7 @@ export async function mergeBubbles(fromName: string, intoName: string, options: 
   if (from.data.id === into.data.id) return fail("a bubble cannot be merged into itself");
   return withStorageLock(join(paths.runtime, "bubble-merge-lock"), async (): Promise<Result<MergePlan>> => {
     const busy = await busyChats([from.data.id, into.data.id]);
-    if (busy.length > 0 && !options.dryRun) return fail(`a bubble is in use; stop these first (orca2 stop --conversation id):\n${busy.map(b => `  ${b.conversation}: ${b.what}`).join("\n")}`);
+    if (busy.length > 0 && !options.dryRun) return fail(`a bubble is in use; stop these first (orca2 daemon stop --conversation id):\n${busy.map(b => `  ${b.conversation}: ${b.what}`).join("\n")}`);
     const fresh = [await readBubble(from.data.id), await readBubble(into.data.id)];
     const [f, i] = fresh;
     if (f === null || f === undefined || i === null || i === undefined) return fail("a bubble disappeared while merging");

@@ -8,7 +8,7 @@ import { registerBuiltins, availablePlugins, loadForCheck } from "../core/plugin
 import { tempHome } from "../test/home";
 import { runPlugin } from "./plugin";
 import { pluginTemplate } from "./template";
-const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you /stop it (or orca2 stop --conversation <id>) and reopen orca2.\n";
+const RESTART = "New agents load this now; a running chat keeps the plugin code, watchers and tabs it loaded until you run orca2 daemon stop --conversation <id> and reopen orca2.\n";
 const home = tempHome("plugin-cli");
 async function cli(...args: string[]) {
   let output = "";

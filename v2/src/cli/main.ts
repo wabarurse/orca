@@ -3,7 +3,7 @@ import { BUILD_ID, errorMessage, fail, ok, type Result } from "../config";
 import { conversationFor, listConversations, readConversation } from "../core/conversations";
 import { removeConversation } from "../core/lifecycle";
 import { runDaemon } from "../core/daemon/daemon";
-import { ensureDaemon, say } from "../core/daemon/client";
+import { ensureDaemon, say, stopDaemon } from "../core/daemon/client";
 import { runHeadless } from "../core/headless";
 import { agentProcess } from "../core/process/agent";
 import { command as coreCommand } from "../core/commands";
@@ -118,6 +118,14 @@ export async function main(argv: string[]): Promise<number> {
     const picked = named !== null ? ok(named) : await conversationArg(args);
     if (!picked.ok) return refuse(picked.error);
     return runSpans(picked.data, args.includes("--json"), out);
+  }
+  if (command === "daemon") {
+    if (args[0] !== "stop") { out("usage: orca2 daemon stop [--conversation id]\n"); return 2; }
+    const picked = await conversationArg(args.slice(1));
+    if (!picked.ok) return refuse(picked.error);
+    await stopDaemon(picked.data);
+    out("daemon stopped\n");
+    return 0;
   }
   if (command === "list") { for (const c of await listConversations()) out(`${c.id}  ${c.name.padEnd(16)} ${c.directory}\n`); return 0; }
   if (command === "mcp") return runMcp(args, line => { out(`${line}\n`); });

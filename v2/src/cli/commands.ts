@@ -1,5 +1,5 @@
 import { fail, ok, type Result } from "../config";
-import type { CoreCommand, CommandContext } from "../core/commands";
+import { rejectsArguments, type CoreCommand, type CommandContext } from "../core/commands";
 import { listConversations, readConversation, type Conversation } from "../core/conversations";
 import { ensureDaemon } from "../core/daemon/client";
 import { stopAgents } from "../core/runner/runtime";
@@ -42,6 +42,7 @@ export async function runCommand(c: CoreCommand, args: string[], out: Out, err: 
   const run = c.run;
   if (run === null) { err(`orca2: /${c.name} is TUI-only: ${c.description}\n`); return 2; }
   const { positional, conversation } = splitArgs(args);
+  if (rejectsArguments(c, positional)) { err(`orca2: ${c.name} takes no arguments\n`); return 2; }
   const ctx = cliContext(conversation === "" ? null : conversation, process.cwd(), out);
   if (positional.length === 0 && c.ask !== null) {
     if (c.ask.kind === "input") { err(`usage: orca2 ${c.name} ${c.args}\n`); return 2; }

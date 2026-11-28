@@ -17,6 +17,7 @@ export const USAGE = `orca2 [start] [folder]            open the TUI for a folde
   orca2 bubble <name|id> --dir <folder>  set a bubble's home folder (chats there see it first)
   ${BUBBLE_MERGE_USAGE}  merge memory, notebook, behavior, chats, plugins; keep <from> as a backup
   orca2 bubble remove <name|id>         remove a bubble no chat uses (e.g. a merge backup)
+  orca2 daemon stop [--conversation id]  shut down the chat's orchestrator daemon (a running chat reloads plugins after it and a reopen)
   ${CHAT_COMMANDS}
   orca2 mcp [test|login|logout] [name]
   ${PLUGIN_USAGE}
@@ -31,7 +32,7 @@ export const USAGE = `orca2 [start] [folder]            open the TUI for a folde
 const GUIDANCE = `How to use it as an agent:
 
 - You run inside a conversation: $ORCA_CONVERSATION is its id, $ORCA_DATA its plugin data. Commands that take
-  --conversation default to it, so model, effort, fast, compact, rename and stop act on your own chat (the one the
+  --conversation default to it, so model, effort, fast, compact, rename, stop and daemon stop act on your own chat (the one the
   user is looking at). Pass --conversation id for another one.
 - Scopes: plugin commands from an agent default to its conversation's bubble. Use --bubble <id> for another bubble and
   --global only when the user asks for a global change.
@@ -39,14 +40,14 @@ const GUIDANCE = `How to use it as an agent:
   group the plugins of one request in one enable. Verify every change with orca2 plugin list --json (or show --json).
 - After changing an installed plugin, run orca2 plugin update <name> [--from <folder>] --yes, never enable (enable also
   turns it on). New agents load the new version at once; a running chat keeps what it loaded until it is restarted:
-  orca2 stop --conversation id (or /stop), then the user reopens orca2.
+  orca2 daemon stop --conversation id, then the user reopens orca2.
 - Read-only, safe any time: help, skill, version, list, bubbles, bubble merge --dry-run, spans, plugin list/show/check/help,
   plugin config without --set/--unset, mcp, mcp test, clean --preview, and model, effort, fast, accounts, mux or
   notifications without an argument (they list the choices, the current one marked *).
-- Change state; only when the user asks: model/effort/fast/accounts/mux/notifications with an argument, compact, cancel,
+- Change state; only when the user asks: model/effort/fast/accounts/mux/notifications with an argument, compact, stop,
   clear-chat, msg, rename, bubble, bubble merge, trust/untrust, plugin enable/disable/inherit/update/new, plugin config
   --set/--unset, mcp login/logout. A running TUI shows a changed model, effort or account within a few seconds.
-- Never without an explicit request, and never on your own conversation: delete, bubble remove, stop, kill, clean (without --preview),
+- Never without an explicit request, and never on your own conversation: delete, bubble remove, daemon stop, kill, clean (without --preview),
   pull, login. They end agents, remove data, replace the binary or open a browser sign-in.
 - Do not start the TUI (orca2 or orca2 start): it needs the user's terminal. orca2 -p runs a headless task and may
   spend model usage; use it only when asked.

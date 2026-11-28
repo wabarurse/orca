@@ -4,7 +4,7 @@ import { z } from "zod";
 import { fail, loadConfig, ok, paths, saveConfig, type Result } from "../config";
 import { writeAtomic, type Conversation } from "./conversations";
 import { readStatus } from "./daemon/channel";
-import { cancel, compactNow, stopDaemon } from "./daemon/client";
+import { cancel, compactNow } from "./daemon/client";
 import { renameConversation } from "./lifecycle";
 import { enabledUis } from "./plugins/uis";
 import { chooseRunner, runnerNames } from "./runner/runtime";
@@ -189,15 +189,13 @@ export const COMMANDS: CoreCommand[] = [
       if (!renamed.ok) return renamed;
       return ok(`renamed to ${renamed.data.conversation.name}${renamed.data.bubble === null ? "" : " (its bubble too)"}`);
     })(ctx) },
-  { name: "stop", args: "", description: "stop the chat's daemon", scoped: true, ask: null,
-    run: async (_args, ctx) => withConversation(async conversation => { await stopDaemon(conversation.id); return ok("daemon stopped"); })(ctx) },
-  { name: "cancel", args: "", description: "stop the chat's current turn; agents keep running", scoped: true, ask: null,
+  { name: "stop", args: "", description: "stop the chat's current turn; agents keep running (the TUI's first Ctrl+C)", scoped: true, ask: null,
     run: async (_args, ctx) => withConversation(async conversation => {
       if (!(await turning(conversation.id))) return ok("nothing is running");
       await cancel(conversation.id);
       return ok("cancelling…");
     })(ctx) },
-  { name: "kill", args: "", description: "stop the chat's turn and every agent it runs (the TUI does it for every open chat, then quits)", scoped: true, ask: null,
+  { name: "kill", args: "", description: "stop the chat's turn and every agent it runs (the TUI's second Ctrl+C: it does it for every open chat, then quits)", scoped: true, ask: null,
     run: async (_args, ctx) => withConversation(async (conversation, c) => {
       if (await turning(conversation.id)) await cancel(conversation.id).catch(() => undefined);
       const stopped = await c.stopAgents(conversation.id).catch((): string[] => []);
@@ -213,12 +211,15 @@ export const COMMANDS: CoreCommand[] = [
   { name: "untrust", args: "[folder]", description: "keep a folder's instructions, skills and plugins off", scoped: false, ask: null,
     run: async (args, ctx) => { const folder = args[0] ?? ctx.directory; await setTrust(folder, false); return ok(`untrusted ${folder}`); } },
   { name: "plugins", args: "", description: "open the Plugins page (CLI: orca2 plugin list)", scoped: false, ask: null, run: null },
-  { name: "close", args: "", description: "close the chat's tab; the chat stays", scoped: false, ask: null, run: null },
+  { name: "close", args: "", description: "close the TUI; the daemon and agents keep running", scoped: false, ask: null, run: null },
+  { name: "close-tab", args: "", description: "close the chat's tab; the chat stays", scoped: false, ask: null, run: null },
   { name: "help", args: "", description: "show the keys and commands (CLI: orca2 help)", scoped: false, ask: null, run: null },
-  { name: "quit", args: "", description: "quit the TUI; agents keep running (also /exit)", scoped: false, ask: null, run: null },
+  { name: "quit", args: "", description: "quit the TUI; the daemon and agents keep running (same as /close)", scoped: false, ask: null, run: null },
 ];
 
 export const command = (name: string): CoreCommand | null => COMMANDS.find(c => c.name === name) ?? null;
+
+export const rejectsArguments = (c: CoreCommand, args: string[]): boolean => c.args.length === 0 && args.length > 0;
 
 export function commandUsage(c: CoreCommand): string {
   return `orca2 ${c.name}${c.args.length > 0 ? ` ${c.args}` : ""}${c.scoped ? " [--conversation id]" : ""}`;
