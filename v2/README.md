@@ -30,10 +30,12 @@ bun run check && bun run lint && bun test
   model → tools (through plugin hooks) → inbox, until the model stops and nothing new arrived.
 - **Input**: Enter queues input as *steer* (read after the current tool batch); Tab while busy queues it as
   *follow-up* (read once the work is done); Esc takes the newest queued message back into the composer.
-- **Quitting**: Ctrl+C (or `/kill`) stops every running subagent of the chats open in this orca2 (as `subagent stop`
-  does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then quits. `/exit` (or
-  `/quit`) quits and leaves the subagents running. Either way each chat's orchestrator daemon stays up (idle after
-  `/kill`) and the next orca2 picks it up; `/stop` stops it. `/cancel` stops the running turn only. Ctrl+D quits no more.
+- **Stopping and quitting**: Ctrl+C (or `/cancel`) stops the orchestrator's running turn in this chat; agents keep
+  running. A second Ctrl+C within 2 seconds (or `/kill`) stops every running subagent of the chats open in this orca2
+  (as `subagent stop` does: their runs read `stopped`), cancels an orchestrator turn that is running in them, then
+  quits; after 2 seconds the next Ctrl+C counts as a first one again. `/exit` (or `/quit`) quits and leaves the
+  subagents running. Either way each chat's orchestrator daemon stays up (idle after `/kill`) and the next orca2 picks
+  it up; `/stop` stops it. Ctrl+D quits no more.
 - **Composer history**: Up/Down recall earlier input, messages and slash commands alike, only while the composer is
   empty or still shows an unedited recalled entry; over typed text they only move the cursor and never replace it.
   Down past the newest empties the composer again. Kept per
@@ -113,7 +115,7 @@ focuses it (closing an open picker or confirmation, like Esc).
 | Enter / Shift+Enter, Alt+Enter, Ctrl+J | send / new line | Shift+Enter: kitty keyboard |
 | click, drag, double-click, triple-click | place the cursor, select, select a word, select the line | mouse reporting |
 
-Ctrl+C still stops every agent and quits; Ctrl+H/Ctrl+L switch chats (⌥←/→ moves by word now). Your terminal's own
+Ctrl+C stops the turn and a second Ctrl+C stops every agent and quits; Ctrl+H/Ctrl+L switch chats (⌥←/→ moves by word now). Your terminal's own
 paste (⌘V in most terminals) arrives as a bracketed paste and is inserted as text, cleaned of control characters.
 
 What the terminal must deliver: orca2 turns on the kitty keyboard protocol (disambiguate + alternate keys) through

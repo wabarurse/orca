@@ -175,6 +175,26 @@ describe("tui", () => {
     expect(t.app["quitting"]).toBe(true);
   });
 
+  test("Ctrl+C runs the shared cancel and keeps the app; a second Ctrl+C within the window runs kill and quits; after it, the next counts as a first", async () => {
+    const t = await app(home.path());
+    const calls: string[] = [];
+    const saved = new Map<string, Run | null>(COMMANDS.map(c => [c.name, c.run]));
+    for (const c of COMMANDS) if (c.name === "cancel" || c.name === "kill") c.run = async () => { calls.push(c.name); return { ok: true, data: c.name === "cancel" ? "cancelling…" : "stopped" }; };
+    try {
+      await t.press({ name: "c", ctrl: true });
+      expect(await t.shows("orchestrator stopped")).toContain("orchestrator stopped, agents keep running");
+      expect(t.app["quitting"]).toBe(false);
+      t.app["lastCtrlC"] = Number.NEGATIVE_INFINITY;
+      await t.press({ name: "c", ctrl: true });
+      expect(t.app["quitting"]).toBe(false);
+      await t.press({ name: "c", ctrl: true });
+      await Bun.sleep(100);
+    } finally { for (const c of COMMANDS) c.run = saved.get(c.name) ?? null; }
+    expect(calls).toEqual(["cancel", "cancel", "kill"]);
+    expect(t.app["quitting"]).toBe(true);
+    expect(t.exits).toEqual([0]);
+  });
+
   test("orca2 clear-chat clears the view of a running TUI; a TUI opened later shows the chat again", async () => {
     const t = await app(home.path());
     const id = t.app.conversationId();
