@@ -75,3 +75,38 @@ test("a capped user message has a row that asks to open it", async () => {
   expect(setup.captureCharFrame()).toContain("show less");
   await setup.dispose();
 });
+
+test("expanding keeps the message in place, and for 5 s after a scroll nothing moves the view until a change brings it back to the bottom", async () => {
+  const setup = await createTestRenderer({ width: 40, height: 14 });
+  let now = 0, open = false, extra: string[] = [];
+  const show = (): void => {
+    const user: screens.ScreenItem = { kind: "user", key: "u", gap: false, rows: open ? ["u0", "u1", "u2", "u3", "u4"] : ["u0"], fill: null, open, more: 4 };
+    display.show({ ...chat([]), items: [{ kind: "rows", key: "a", gap: false, rows: Array.from({ length: 30 }, (_, i) => `line ${i}`) }, user, { kind: "rows", key: "b", gap: false, rows: extra }] });
+  };
+  const display = new Display(setup.renderer, action => { if (action.kind === "toggle") { open = !open; show(); } }, () => {}, () => now);
+  const row = (text: string): number => setup.captureCharFrame().split("\n").findIndex(line => line.includes(text));
+  show();
+  await setup.renderOnce();
+  const top = row("u0"), toggle = row("more lines");
+  expect(toggle).toBeGreaterThan(top);
+  await setup.mockMouse.click((setup.captureCharFrame().split("\n")[toggle] ?? "").indexOf("more"), toggle);
+  await setup.renderOnce();
+  expect(row("u0")).toBe(top);
+
+  now = 1000;
+  display.scroll("up");
+  display.scroll("down");
+  await setup.renderOnce();
+  const held = setup.captureCharFrame();
+  now = 5999;
+  extra = ["new 1"];
+  show();
+  await setup.renderOnce();
+  expect(setup.captureCharFrame()).toBe(held);
+  now = 6000;
+  extra = ["new 1", "new 2"];
+  show();
+  await setup.renderOnce();
+  expect(row("new 2")).toBeGreaterThan(0);
+  await setup.dispose();
+});
