@@ -78,7 +78,9 @@ function sameItem(a: screens.ScreenItem, b: screens.ScreenItem): boolean {
   return a.title === b.title && a.failed === b.failed && a.open === b.open && a.opens === b.opens;
 }
 
-export type ChatEvents = { action: (action: screens.ScreenAction) => void };
+export type ChatEvents = { action: (action: screens.ScreenAction) => void; now: () => number };
+
+export const SCROLL_HOLD_MS = 5000;
 
 export class ChatView {
   readonly root: BoxRenderable;
@@ -94,6 +96,8 @@ export class ChatView {
   private built: { key: string; item: Built }[] = [];
   private headerSig = "";
   private pressed: { x: number; y: number } | null = null;
+  private scrolledAt = Number.NEGATIVE_INFINITY;
+  private tailSig = "";
 
   constructor(private readonly ctx: RenderContext, private readonly events: ChatEvents) {
     this.root = new BoxRenderable(ctx, { flexDirection: "column", width: "100%", height: "100%" });
@@ -111,6 +115,7 @@ export class ChatView {
       contentOptions: { flexDirection: "column" },
       verticalScrollbarOptions: { visible: false },
     });
+    this.body.onMouseScroll = () => { this.hold(); };
     this.tail = new TextRenderable(ctx, { content: "", wrapMode: "none", selectable: true });
     this.welcome = new BoxRenderable(ctx, { flexGrow: 1, justifyContent: "center", alignItems: "center", visible: false });
     this.welcomeArt = new TextRenderable(ctx, { content: "", wrapMode: "none", fg: COLOURS.muted });
@@ -155,9 +160,15 @@ export class ChatView {
 
   scroll(by: "up" | "down" | "page-up" | "page-down" | "home" | "end"): void {
     const page = Math.max(1, this.body.height - 1);
+    if (by === "end") { this.scrolledAt = Number.NEGATIVE_INFINITY; this.body.stickyScroll = true; } else this.hold();
     if (by === "home") this.body.scrollTo(0);
     else if (by === "end") this.body.scrollTo(this.body.scrollHeight);
     else this.body.scrollBy(by === "up" ? -1 : by === "down" ? 1 : by === "page-up" ? -page : page);
+  }
+
+  private hold(): void {
+    this.scrolledAt = this.events.now();
+    this.body.stickyScroll = false;
   }
 
   private showHeader(header: screens.ScreenHeader | null, cols: number): void {
@@ -205,6 +216,12 @@ export class ChatView {
       for (const entry of next) this.body.insertBefore(entry.item.node, this.tail);
     }
     this.built = next;
+    const tailSig = tail.join("\n");
+    if ((!same || tailSig !== this.tailSig) && !this.body.stickyScroll && this.events.now() - this.scrolledAt >= SCROLL_HOLD_MS) {
+      this.body.stickyScroll = true;
+      this.body.scrollTo(Number.MAX_SAFE_INTEGER);
+    }
+    this.tailSig = tailSig;
     this.tail.content = styledRows(tail);
     this.tail.visible = tail.length > 0;
   }
@@ -249,7 +266,7 @@ export class ChatView {
       const label = item.open ? "▾ show less" : `▸ ${item.more} more line${item.more === 1 ? "" : "s"}`;
       const toggle = new TextRenderable(this.ctx, { content: styled([chunk(label, COLOURS.muted)]), wrapMode: "none" });
       toggle.onMouseDown = (event: MouseEvent) => { this.pressed = { x: event.x, y: event.y }; };
-      toggle.onMouseUp = (event: MouseEvent) => { this.click(event, () => { this.events.action({ kind: "toggle", key: item.key }); }); };
+      toggle.onMouseUp = (event: MouseEvent) => { this.click(event, () => { this.hold(); this.events.action({ kind: "toggle", key: item.key }); }); };
       block.add(toggle);
     }
     line.add(block);
@@ -257,7 +274,7 @@ export class ChatView {
   }
 
   private fold(item: Extract<screens.ScreenItem, { kind: "fold" }>): CollapsibleRootRenderable {
-    const root = new CollapsibleRootRenderable(this.ctx, { flexDirection: "column", open: item.open, onOpenChange: () => { this.events.action({ kind: "toggle", key: item.key }); } });
+    const root = new CollapsibleRootRenderable(this.ctx, { flexDirection: "column", open: item.open, onOpenChange: () => { this.hold(); this.events.action({ kind: "toggle", key: item.key }); } });
     const head = new BoxRenderable(this.ctx, { flexDirection: "row" });
     const trigger = new CollapsibleTriggerRenderable(this.ctx, { store: root.store, flexDirection: "row" });
     trigger.add(new TextRenderable(this.ctx, { content: styled([chunk(item.open ? "▾ " : "▸ ", COLOURS.faint), chunk(item.title, COLOURS.muted)]), wrapMode: "none" }));

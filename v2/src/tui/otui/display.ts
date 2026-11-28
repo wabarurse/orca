@@ -11,8 +11,8 @@ export class Display {
   private readonly page: TextRenderable;
   private shown: screens.Screen | null = null;
 
-  constructor(private readonly renderer: CliRenderer, private readonly act: (action: screens.ScreenAction) => void, private readonly key: (key: Key) => void) {
-    this.chat = new ChatView(renderer, { action: act });
+  constructor(private readonly renderer: CliRenderer, private readonly act: (action: screens.ScreenAction) => void, private readonly key: (key: Key) => void, now: () => number = Date.now) {
+    this.chat = new ChatView(renderer, { action: act, now });
     this.page = new TextRenderable(renderer, { content: "", fg: RGBA.defaultForeground(), width: "100%", height: "100%", wrapMode: "none", selectable: true, visible: false });
     this.page.onMouse = (event: MouseEvent) => { this.mouse(event); };
     renderer.root.add(this.chat.root);
